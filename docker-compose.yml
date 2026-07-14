@@ -1,0 +1,50 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: launchproof
+      POSTGRES_USER: launchproof
+      POSTGRES_PASSWORD: launchproof
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U launchproof"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - launchproof-db:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file: .env
+    environment:
+      PORT: 4000
+      DATABASE_URL: postgresql://launchproof:launchproof@postgres:5432/launchproof
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "4000:4000"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:4000}
+        NEXT_PUBLIC_XLAYER_RPC_URL: ${NEXT_PUBLIC_XLAYER_RPC_URL:-}
+        NEXT_PUBLIC_REGISTRY_ADDRESS: ${NEXT_PUBLIC_REGISTRY_ADDRESS:-}
+        NEXT_PUBLIC_CHAIN_ID: "196"
+        NEXT_PUBLIC_WEB_BASE_URL: ${NEXT_PUBLIC_WEB_BASE_URL:-http://localhost:3000}
+        NEXT_PUBLIC_SOURCE_REPOSITORY: ${NEXT_PUBLIC_SOURCE_REPOSITORY:-}
+    environment:
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+
+volumes:
+  launchproof-db:

@@ -1,0 +1,93 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Run {
+  id                       String       @id
+  idempotencyKey           String       @unique
+  state                    String
+  target                   String
+  label                    String?
+  passportStatus           String?
+  gates                    Json?
+  evidence                 Json?
+  record                   Json?
+  canonicalEvidenceJcs     String?
+  evidenceHash             String?
+  manifestHash             String?
+  inputHash                String?
+  normalizedResultHash     String?
+  sourceRevision           String?
+  buildCommit              String?
+  previousRunId            String?
+  provider                 String?
+  signatureState           String?
+  evidenceTransaction      String?
+  evidenceBlock            String?
+  error                    String?
+  createdAt                DateTime     @default(now())
+  updatedAt                DateTime     @updatedAt
+  invocations              Invocation[]
+  payments                 Payment[]
+}
+
+model Invocation {
+  id             String  @id @default(cuid())
+  runId          String
+  run            Run     @relation(fields: [runId], references: [id], onDelete: Cascade)
+  kind           String
+  sequence       Int
+  input          Json
+  output         Json?
+  expected       Json?
+  comparisons    Json
+  classification String?
+  latencyMs      Int
+
+  @@unique([runId, kind, sequence])
+}
+
+model Payment {
+  id                    String   @id
+  runId                 String
+  run                   Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  kind                  String
+  payer                 String?
+  recipient             String?
+  amount                String
+  asset                 String
+  network               String
+  route                 String
+  settlementTransaction String?
+  status                String
+  createdAt             DateTime @default(now())
+}
+
+model Provider {
+  address            String   @id
+  manifestHash       String
+  signature          String?
+  verificationResult String
+  updatedAt          DateTime @updatedAt
+}
+
+model Fixture {
+  variant            String @id
+  endpoint           String
+  sourceUrl          String
+  declarationAddress String
+}
+
+model CampaignLog {
+  id           String   @id @default(cuid())
+  category     String
+  occurredAt   DateTime
+  publicUrl    String?
+  evidence     Json
+  consented    Boolean
+}

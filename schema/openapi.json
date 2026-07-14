@@ -1,0 +1,136 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "LaunchProof API",
+    "version": "1.0.0",
+    "description": "Bounded agent-service rehearsal and chain-backed Service Passport API. Paid routes use fixed OKX x402 exact-scheme prices on eip155:196."
+  },
+  "servers": [{ "url": "https://api.launchproof.example" }],
+  "paths": {
+    "/healthz": {
+      "get": { "operationId": "health", "responses": { "200": { "description": "Current dependency state", "content": { "application/json": { "schema": { "type": "object" } } } } } }
+    },
+    "/api/rehearsals": {
+      "post": {
+        "operationId": "createGenesisRehearsal",
+        "summary": "Create a 0.01 USDT0 rehearsal",
+        "requestBody": { "$ref": "#/components/requestBodies/Rehearsal" },
+        "responses": {
+          "202": { "description": "Run queued", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RunProgress" } } } },
+          "402": { "$ref": "#/components/responses/PaymentRequired" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/api/renewals": {
+      "post": {
+        "operationId": "createRenewal",
+        "summary": "Create a 0.10 USDT0 renewal",
+        "requestBody": { "$ref": "#/components/requestBodies/Renewal" },
+        "responses": {
+          "202": { "description": "Renewal queued", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RunProgress" } } } },
+          "402": { "$ref": "#/components/responses/PaymentRequired" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/runs": {
+      "get": { "operationId": "listRuns", "responses": { "200": { "description": "Recent public Passports", "content": { "application/json": { "schema": { "type": "object", "properties": { "runs": { "type": "array", "items": { "$ref": "#/components/schemas/Passport" } } } } } } } } }
+    },
+    "/runs/{runId}": {
+      "get": {
+        "operationId": "getServicePassport",
+        "parameters": [{ "$ref": "#/components/parameters/RunId" }],
+        "responses": {
+          "200": { "description": "Completed Passport", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Passport" } } } },
+          "202": { "description": "Run in progress", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RunProgress" } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/verify/{runId}": {
+      "get": {
+        "operationId": "verifyServicePassport",
+        "parameters": [{ "$ref": "#/components/parameters/RunId" }],
+        "responses": { "200": { "description": "Chain-derived verification", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Verification" } } } } }
+      }
+    },
+    "/receipts/{paymentId}": {
+      "get": {
+        "operationId": "getPaymentReceipt",
+        "parameters": [{ "name": "paymentId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Payment receipt and run linkage", "content": { "application/json": { "schema": { "type": "object" } } } }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/status": { "get": { "operationId": "getStatus", "responses": { "200": { "description": "Observed status, not an SLA", "content": { "application/json": { "schema": { "type": "object" } } } } } } },
+    "/fixtures": { "get": { "operationId": "listFixtures", "responses": { "200": { "description": "Controlled fixture catalog", "content": { "application/json": { "schema": { "type": "object" } } } } } } },
+    "/docs/quick-verify": { "get": { "operationId": "getQuickVerify", "responses": { "200": { "description": "Exact four-step reviewer path", "content": { "application/json": { "schema": { "type": "object" } } } } } } },
+    "/schema/openapi.json": { "get": { "operationId": "getOpenApi", "responses": { "200": { "description": "This OpenAPI document" } } } },
+    "/.well-known/launchproof.json": { "get": { "operationId": "getProjectCard", "responses": { "200": { "description": "LaunchProof project card", "content": { "application/json": { "schema": { "type": "object" } } } } } } }
+  },
+  "components": {
+    "parameters": {
+      "RunId": { "name": "runId", "in": "path", "required": true, "schema": { "type": "string" } }
+    },
+    "requestBodies": {
+      "Rehearsal": {
+        "required": true,
+        "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["url", "idempotency_key"], "properties": { "url": { "type": "string", "format": "uri" }, "idempotency_key": { "type": "string", "minLength": 8, "maxLength": 120 } } } } }
+      },
+      "Renewal": {
+        "required": true,
+        "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["url", "idempotency_key", "previous_run_id"], "properties": { "url": { "type": "string", "format": "uri" }, "idempotency_key": { "type": "string", "minLength": 8, "maxLength": 120 }, "previous_run_id": { "type": "string" } } } } }
+      }
+    },
+    "responses": {
+      "PaymentRequired": { "description": "OKX x402 payment challenge" },
+      "RateLimited": { "description": "Rate limit exceeded", "headers": { "Retry-After": { "schema": { "type": "integer" } } } },
+      "NotFound": { "description": "Resource not found" }
+    },
+    "schemas": {
+      "GateState": { "type": "string", "enum": ["pass", "fail", "not_tested"] },
+      "Gates": {
+        "type": "object", "additionalProperties": false,
+        "required": ["discoverable", "contract_correct", "fresh_challenge", "safe_to_rehearse", "paid_delivery"],
+        "properties": {
+          "discoverable": { "$ref": "#/components/schemas/GateState" },
+          "contract_correct": { "$ref": "#/components/schemas/GateState" },
+          "fresh_challenge": { "$ref": "#/components/schemas/GateState" },
+          "safe_to_rehearse": { "$ref": "#/components/schemas/GateState" },
+          "paid_delivery": { "$ref": "#/components/schemas/GateState" }
+        }
+      },
+      "RunProgress": {
+        "type": "object", "required": ["run_id", "state"],
+        "properties": { "run_id": { "type": "string" }, "state": { "type": "string" }, "error": { "type": ["string", "null"] } }
+      },
+      "Passport": {
+        "type": "object",
+        "required": ["run_id", "state", "label", "scope", "passport_status", "gates", "evidence_hash", "manifest_hash", "input_hash", "normalized_result_hash", "generated_at"],
+        "properties": {
+          "run_id": { "type": "string" },
+          "state": { "enum": ["complete", "complete_local"] },
+          "label": { "enum": ["fixture", "production", "local_only"] },
+          "scope": { "const": "structured-extraction-v1 only" },
+          "passport_status": { "enum": ["verified", "needs-attention", "not-rehearsable"] },
+          "gates": { "$ref": "#/components/schemas/Gates" },
+          "canonical_evidence": { "type": "object" },
+          "evidence_hash": { "type": "string", "pattern": "^0x[0-9a-f]{64}$" },
+          "manifest_hash": { "type": "string", "pattern": "^0x[0-9a-f]{64}$" },
+          "input_hash": { "type": "string", "pattern": "^0x[0-9a-f]{64}$" },
+          "normalized_result_hash": { "type": "string", "pattern": "^0x[0-9a-f]{64}$" },
+          "generated_at": { "type": "string", "format": "date-time" },
+          "chain": { "type": "object" },
+          "limitations": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "Verification": {
+        "type": "object",
+        "required": ["chain_record_found", "evidence_hash_match", "manifest_hash_match", "input_hash_match", "result_hash_match", "provider_signature_match", "gate_status_match", "storage_match", "link_fields_match", "cache_match", "match"],
+        "properties": {
+          "chain_record_found": { "type": "boolean" }, "evidence_hash_match": { "type": "boolean" }, "manifest_hash_match": { "type": "boolean" }, "input_hash_match": { "type": "boolean" }, "result_hash_match": { "type": "boolean" }, "provider_signature_match": { "type": "boolean" }, "gate_status_match": { "type": "boolean" }, "storage_match": { "type": "boolean" }, "link_fields_match": { "type": "boolean" }, "cache_match": { "type": ["boolean", "null"] }, "match": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

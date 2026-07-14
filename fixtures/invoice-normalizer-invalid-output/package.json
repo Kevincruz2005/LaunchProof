@@ -1,0 +1,6 @@
+{
+  "name": "@launchproof/fixture-invalid-output", "version": "1.0.0", "private": true, "type": "module",
+  "scripts": { "dev": "tsx watch src/index.ts", "build": "tsc -p tsconfig.json", "start": "node dist/index.js", "typecheck": "tsc -p tsconfig.json --noEmit" },
+  "dependencies": { "@launchproof/fixture-runtime": "workspace:*" },
+  "devDependencies": { "tsx": "^4.20.3", "typescript": "^5.8.3" }
+}

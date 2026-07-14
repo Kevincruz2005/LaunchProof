@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://launchproof.example/schema/evidence.schema.json",
+  "title": "LaunchProof Canonical Evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "target", "label", "generated_at", "manifest", "discovery", "fixed_sample", "invalid_input", "challenges", "timings", "gates", "passport_status", "provider_declaration", "payments", "hash_material", "source_revision", "build_commit", "remediation", "limitations"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "run_id": { "type": "string" },
+    "target": { "type": "string" },
+    "label": { "enum": ["fixture", "production", "local_only"] },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "manifest": { "type": "object" },
+    "discovery": { "type": "object" },
+    "fixed_sample": { "type": "object" },
+    "invalid_input": { "type": "object" },
+    "challenges": { "type": "array", "minItems": 0, "maxItems": 3 },
+    "timings": { "type": "object" },
+    "gates": { "type": "object" },
+    "passport_status": { "enum": ["verified", "needs-attention", "not-rehearsable"] },
+    "provider_declaration": { "type": "object" },
+    "payments": { "type": "object" },
+    "hash_material": { "type": "object" },
+    "source_revision": { "type": "string" },
+    "build_commit": { "type": "string" },
+    "previous_run_id": { "type": ["string", "null"] },
+    "remediation": { "type": "array", "items": { "type": "string" } },
+    "limitations": { "type": "array", "items": { "type": "string" } }
+  }
+}

@@ -1,0 +1,15 @@
+node_modules/
+.next/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+out/
+contracts/out-solc/
+cache/
+broadcast/
+backend/prisma/*.db*
+*.log
+*.tsbuildinfo
+.DS_Store

@@ -1,0 +1,10 @@
+.git
+.github
+node_modules
+**/node_modules
+**/.next
+**/dist
+**/coverage
+.env
+contracts/out
+contracts/cache

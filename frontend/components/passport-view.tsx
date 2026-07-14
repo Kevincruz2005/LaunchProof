@@ -1,0 +1,114 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { API_BASE, apiGet, type Passport } from "../lib/generated-api/client";
+import { CopyValue } from "./copy-value";
+import { GateGrid, StatusBadge } from "./gates";
+import { Disclaimers } from "./brand";
+
+export function PassportView({ passport }: { passport: Passport }) {
+  const [chainVerified, setChainVerified] = useState(false);
+  useEffect(() => {
+    if (!passport.chain.published) return;
+    void apiGet<{ match: boolean }>(`/verify/${encodeURIComponent(passport.run_id)}`)
+      .then((verification) => setChainVerified(verification.match === true))
+      .catch(() => setChainVerified(false));
+  }, [passport.chain.published, passport.run_id]);
+  const canShare = passport.passport_status === "verified" && chainVerified;
+  const evidence = passport.canonical_evidence as unknown as EvidenceDetails;
+  async function share() {
+    const url = window.location.href;
+    if (navigator.share) await navigator.share({ title: "LaunchProof Service Passport", url });
+    else await navigator.clipboard.writeText(url);
+  }
+  return (
+    <>
+      <section className="passport-hero panel">
+        <div>
+          <p className="eyebrow">Service Passport · {passport.label.replace("_", " ")}</p>
+          <h1>{String((passport.canonical_evidence as { manifest?: { service_name?: string } }).manifest?.service_name ?? "Agent service")}</h1>
+          <p>Rehearsed {new Date(passport.generated_at).toLocaleString()} · {passport.scope}</p>
+        </div>
+        <div className="passport-actions">
+          <StatusBadge status={passport.passport_status} />
+          {canShare ? <button className="secondary" type="button" onClick={share}>Share factual link</button> : null}
+        </div>
+      </section>
+      <GateGrid gates={passport.gates} />
+      <section className="panel evidence-summary">
+        <div className="section-heading"><div><p className="eyebrow">Normalized transcript</p><h2>What the rehearsal observed</h2></div><span className="observed-metric">p95 {evidence.timings?.observed_p95_ms ?? 0} ms · total {evidence.timings?.total_ms ?? 0} ms</span></div>
+        <div className="evidence-grid">
+          <InvocationCard invocation={evidence.fixed_sample} title="Fixed sample" />
+          <InvocationCard invocation={evidence.invalid_input} title="Controlled invalid input" />
+          {(evidence.challenges ?? []).map((invocation, index) => <InvocationCard invocation={invocation} title={`Fresh challenge ${index + 1}`} key={`${invocation.kind}-${index}`} />)}
+        </div>
+      </section>
+      <div className="two-column">
+        <section className="panel">
+          <div className="section-heading"><div><p className="eyebrow">Evidence anchor</p><h2>Chain and hashes</h2></div><span className={passport.chain.published ? "dot-live" : "dot-muted"}>{passport.chain.published ? "On chain" : "Local only"}</span></div>
+          <CopyValue label="Run ID" value={passport.run_id} />
+          <CopyValue label="Evidence hash" value={passport.evidence_hash} />
+          <CopyValue label="Manifest hash" value={passport.manifest_hash} />
+          <CopyValue label="Input hash" value={passport.input_hash} />
+          <CopyValue label="Normalized result hash" value={passport.normalized_result_hash} />
+          <div className="button-row">
+            <Link className="secondary" href={`/verify/${encodeURIComponent(passport.run_id)}`}>Verify from X Layer</Link>
+            <a className="text-link" href={`${API_BASE}/runs/${encodeURIComponent(passport.run_id)}`} target="_blank" rel="noreferrer">Raw JSON</a>
+            {passport.chain.explorer_url ? <a className="text-link" href={passport.chain.explorer_url} target="_blank" rel="noreferrer">Evidence transaction ↗</a> : null}
+          </div>
+        </section>
+        <section className="panel">
+          <p className="eyebrow">Declaration and delivery</p>
+          <h2>Who declared it</h2>
+          <CopyValue label="Provider" value={passport.provider_declaration.provider_address} />
+          <dl className="detail-list">
+            <div><dt>Declaration</dt><dd>{passport.provider_declaration.verification_state.replace("_", " ")}</dd></div>
+            <div><dt>Source revision</dt><dd>{passport.source_version_sha}</dd></div>
+            <div><dt>LaunchProof payment</dt><dd><Link href={`/receipts/${encodeURIComponent(passport.payment.payment_id)}`}>{passport.payment.amount} USDT0</Link></dd></div>
+            <div><dt>Target payment</dt><dd>{passport.target_payment ? "Settled" : passport.gates.paid_delivery === "not_tested" ? "Not advertised" : "Failed"}</dd></div>
+          </dl>
+          {passport.previous_run_id ? <Link className="text-link" href={`/compare?left=${encodeURIComponent(passport.previous_run_id)}&right=${encodeURIComponent(passport.run_id)}`}>Compare with prior version →</Link> : null}
+        </section>
+      </div>
+      {passport.remediation.length ? <section className="panel"><p className="eyebrow">Deterministic remediation</p><h2>What to inspect</h2><ul className="remediation">{passport.remediation.map((item) => <li key={item}>{item}</li>)}</ul></section> : null}
+      <section className="panel passport-limitations"><p className="eyebrow">Scope and limitations</p><h2>What this Passport does not claim</h2><ul className="remediation">{passport.limitations.map((item) => <li key={item}>{item}</li>)}</ul></section>
+      <details className="panel raw"><summary>Raw canonical evidence</summary><pre>{JSON.stringify(passport.canonical_evidence, null, 2)}</pre></details>
+      <Disclaimers />
+    </>
+  );
+}
+
+interface EvidenceDetails {
+  timings?: { observed_p95_ms: number; total_ms: number };
+  fixed_sample?: Invocation;
+  invalid_input?: Invocation;
+  challenges?: Invocation[];
+}
+
+interface Invocation {
+  kind: string;
+  latency_ms: number;
+  classification: string | null;
+  structured_error?: { code: string | number; message: string } | null;
+  comparisons?: Array<{ field: string; expected: unknown; actual: unknown; match: boolean }>;
+}
+
+function InvocationCard({ invocation, title }: { invocation: Invocation | undefined; title: string }) {
+  if (!invocation) return null;
+  const passed = invocation.classification === null;
+  return (
+    <article className="invocation-card">
+      <div><span className={passed ? "invocation-pass" : "invocation-fail"}>{passed ? "PASS" : "FAIL"}</span><small>{invocation.latency_ms} ms</small></div>
+      <h3>{title}</h3>
+      {invocation.classification ? <p>Classification: <code>{invocation.classification}</code></p> : null}
+      {invocation.structured_error ? <p>Structured error: <code>{String(invocation.structured_error.code)}</code></p> : null}
+      {(invocation.comparisons ?? []).length ? <ul>{invocation.comparisons!.map((comparison) => <li key={comparison.field}><span>{comparison.match ? "match" : "mismatch"}</span><code>{comparison.field}</code><small>{display(comparison.actual)} / {display(comparison.expected)}</small></li>)}</ul> : null}
+    </article>
+  );
+}
+
+function display(value: unknown) {
+  const rendered = typeof value === "string" ? value : JSON.stringify(value);
+  return rendered && rendered.length > 80 ? `${rendered.slice(0, 77)}...` : (rendered ?? "missing");
+}

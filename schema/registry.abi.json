@@ -1,0 +1,387 @@
+[
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "writer_",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "constructor"
+  },
+  {
+    "inputs": [],
+    "name": "DuplicateRun",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "EvidenceHashMismatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "EvidenceTooLarge",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidGateStatus",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidProviderSignature",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidRecord",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "Unauthorized",
+    "type": "error"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "runId",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "evidenceHash",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "manifestHash",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "inputHash",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "normalizedResultHash",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "sourceRevisionHash",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "paymentReceiptHash",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "previousRunId",
+        "type": "bytes32"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "provider",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "anchoredBy",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint40",
+        "name": "anchoredAt",
+        "type": "uint40"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint16",
+        "name": "gateBitmap",
+        "type": "uint16"
+      },
+      {
+        "indexed": false,
+        "internalType": "enum LaunchProofRegistry.PassportStatus",
+        "name": "status",
+        "type": "uint8"
+      },
+      {
+        "indexed": false,
+        "internalType": "bool",
+        "name": "providerSignatureVerified",
+        "type": "bool"
+      },
+      {
+        "indexed": false,
+        "internalType": "bool",
+        "name": "isFixture",
+        "type": "bool"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes",
+        "name": "canonicalEvidence",
+        "type": "bytes"
+      }
+    ],
+    "name": "RunPublished",
+    "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "MAX_EVIDENCE_BYTES",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "runId",
+        "type": "bytes32"
+      }
+    ],
+    "name": "getRun",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "evidenceHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "manifestHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "inputHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "normalizedResultHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "sourceRevisionHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "paymentReceiptHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "previousRunId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "address",
+            "name": "provider",
+            "type": "address"
+          },
+          {
+            "internalType": "address",
+            "name": "anchoredBy",
+            "type": "address"
+          },
+          {
+            "internalType": "uint40",
+            "name": "anchoredAt",
+            "type": "uint40"
+          },
+          {
+            "internalType": "uint16",
+            "name": "gateBitmap",
+            "type": "uint16"
+          },
+          {
+            "internalType": "enum LaunchProofRegistry.PassportStatus",
+            "name": "status",
+            "type": "uint8"
+          },
+          {
+            "internalType": "bool",
+            "name": "providerSignatureVerified",
+            "type": "bool"
+          },
+          {
+            "internalType": "bool",
+            "name": "isFixture",
+            "type": "bool"
+          }
+        ],
+        "internalType": "struct LaunchProofRegistry.RunRecord",
+        "name": "",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "runId",
+        "type": "bytes32"
+      }
+    ],
+    "name": "hasRun",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "runId",
+        "type": "bytes32"
+      },
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "evidenceHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "manifestHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "inputHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "normalizedResultHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "sourceRevisionHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "paymentReceiptHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "previousRunId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "address",
+            "name": "provider",
+            "type": "address"
+          },
+          {
+            "internalType": "address",
+            "name": "anchoredBy",
+            "type": "address"
+          },
+          {
+            "internalType": "uint40",
+            "name": "anchoredAt",
+            "type": "uint40"
+          },
+          {
+            "internalType": "uint16",
+            "name": "gateBitmap",
+            "type": "uint16"
+          },
+          {
+            "internalType": "enum LaunchProofRegistry.PassportStatus",
+            "name": "status",
+            "type": "uint8"
+          },
+          {
+            "internalType": "bool",
+            "name": "providerSignatureVerified",
+            "type": "bool"
+          },
+          {
+            "internalType": "bool",
+            "name": "isFixture",
+            "type": "bool"
+          }
+        ],
+        "internalType": "struct LaunchProofRegistry.RunRecord",
+        "name": "supplied",
+        "type": "tuple"
+      },
+      {
+        "internalType": "bytes",
+        "name": "canonicalEvidence",
+        "type": "bytes"
+      },
+      {
+        "internalType": "bytes",
+        "name": "providerSignature",
+        "type": "bytes"
+      }
+    ],
+    "name": "publishRun",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "writer",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+]

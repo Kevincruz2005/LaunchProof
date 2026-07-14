@@ -1,0 +1,8 @@
+packages:
+  - backend
+  - frontend
+  - fixtures/runtime
+  - fixtures/invoice-normalizer-healthy
+  - fixtures/invoice-normalizer-invalid-output
+  - fixtures/invoice-normalizer-schema-drift
+  - fixtures/invoice-normalizer-timeout

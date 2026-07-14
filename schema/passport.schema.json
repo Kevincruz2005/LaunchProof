@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://launchproof.example/schema/passport.schema.json",
+  "title": "LaunchProof Service Passport",
+  "type": "object",
+  "required": ["run_id", "label", "scope", "passport_status", "gates", "evidence_hash", "manifest_hash", "input_hash", "normalized_result_hash", "generated_at", "limitations"],
+  "properties": {
+    "run_id": { "type": "string" },
+    "previous_run_id": { "type": ["string", "null"] },
+    "label": { "enum": ["fixture", "production", "local_only"] },
+    "scope": { "const": "structured-extraction-v1 only" },
+    "passport_status": { "enum": ["verified", "needs-attention", "not-rehearsable"] },
+    "gates": {
+      "type": "object",
+      "required": ["discoverable", "contract_correct", "fresh_challenge", "safe_to_rehearse", "paid_delivery"],
+      "additionalProperties": false,
+      "properties": {
+        "discoverable": { "$ref": "#/$defs/gate" },
+        "contract_correct": { "$ref": "#/$defs/gate" },
+        "fresh_challenge": { "$ref": "#/$defs/gate" },
+        "safe_to_rehearse": { "$ref": "#/$defs/gate" },
+        "paid_delivery": { "$ref": "#/$defs/gate" }
+      }
+    },
+    "canonical_evidence": { "type": "object" },
+    "evidence_hash": { "$ref": "#/$defs/hash" },
+    "manifest_hash": { "$ref": "#/$defs/hash" },
+    "input_hash": { "$ref": "#/$defs/hash" },
+    "normalized_result_hash": { "$ref": "#/$defs/hash" },
+    "source_version_sha": { "type": "string" },
+    "build_commit_sha": { "type": "string" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "limitations": { "type": "array", "items": { "type": "string" } }
+  },
+  "$defs": {
+    "gate": { "enum": ["pass", "fail", "not_tested"] },
+    "hash": { "type": "string", "pattern": "^0x[0-9a-f]{64}$" }
+  }
+}
