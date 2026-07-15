@@ -27,7 +27,7 @@ export function validateTargetUrl(raw: string, allowPrivate = false): URL {
   } catch {
     throw new UnsafeTargetError("Target is not a valid URL");
   }
-  if (url.protocol !== "https:") throw new UnsafeTargetError("Only public HTTPS targets are allowed");
+  if (url.protocol !== "https:" && !(allowPrivate && url.protocol === "http:")) throw new UnsafeTargetError("Only public HTTPS targets are allowed");
   if (url.username || url.password) throw new UnsafeTargetError("URL credentials are forbidden");
   if (url.port && url.port !== "443" && !allowPrivate) throw new UnsafeTargetError("Non-standard HTTPS ports are forbidden");
   if (url.hostname.endsWith(".local") || url.hostname.endsWith(".internal")) {

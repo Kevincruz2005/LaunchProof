@@ -36,7 +36,14 @@ export const LaunchContractSchema = z
   .object({
     contract_version: z.literal("1.0"),
     service_name: z.string().min(1).max(120),
-    mcp_endpoint: z.string().url().startsWith("https://").max(2_048),
+    mcp_endpoint: z
+      .string()
+      .url()
+      .max(2_048)
+      .refine(
+        (val) => val.startsWith("https://") || (process.env.ALLOW_PRIVATE_TARGETS === "true" && val.startsWith("http://")),
+        { message: "mcp_endpoint must start with https:// (or http:// when ALLOW_PRIVATE_TARGETS is true)" }
+      ),
     tool: z.string().min(1).max(80),
     mode: z.literal("sample_only"),
     sample_input: z.record(z.string().max(80), sampleValue).refine((value) => Object.keys(value).length <= 20),
@@ -50,7 +57,14 @@ export const LaunchContractSchema = z
         asset: z.literal("0x779ded0c9e1022225f8e0630b35a9b54be713736"),
         amount: z.string().regex(/^[0-9]+$/).refine((value) => BigInt(value) > 0n),
         recipient: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
-        resource_url: z.string().url().startsWith("https://").max(2_048),
+        resource_url: z
+          .string()
+          .url()
+          .max(2_048)
+          .refine(
+            (val) => val.startsWith("https://") || (process.env.ALLOW_PRIVATE_TARGETS === "true" && val.startsWith("http://")),
+            { message: "resource_url must start with https:// (or http:// when ALLOW_PRIVATE_TARGETS is true)" }
+          ),
       })
       .strict()
       .optional(),
