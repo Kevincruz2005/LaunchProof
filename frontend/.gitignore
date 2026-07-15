@@ -1,0 +1,3 @@
+.vercel
+# Allow the production env file (only public NEXT_PUBLIC_ vars, no secrets)
+!.env.production
