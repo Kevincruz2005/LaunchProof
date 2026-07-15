@@ -1,3 +1,4 @@
 .vercel
-# Allow the production env file (only public NEXT_PUBLIC_ vars, no secrets)
+# Allow env files to be committed (frontend only contains public NEXT_PUBLIC_ vars, no secrets)
+!.env
 !.env.production
