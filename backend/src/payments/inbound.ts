@@ -12,7 +12,7 @@ import type { Repository } from "../db/store.js";
 const protectedPaths = new Set(["/api/rehearsals", "/api/renewals", "/mcp/rehearse", "/mcp/renew"]);
 
 export function createPaymentMiddleware(config: Config, repository: Repository): RequestHandler {
-  if (!config.productionReady || !config.PAYOUT_ADDRESS) {
+  if (!config.X402_ENABLED || !config.PAYOUT_ADDRESS) {
     return (request: Request, response: Response, next: NextFunction) => {
       if (!protectedPaths.has(request.path)) return next();
       if (config.ALLOW_LOCAL_UNPAID_RUNS && request.header("x-launchproof-local-run") === "true") return next();

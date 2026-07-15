@@ -12,7 +12,8 @@ import {
   type PublicClient,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { xLayer } from "viem/chains";
+import { xLayer, xLayerTestnet } from "viem/chains";
+import pLimit from "p-limit";
 import type { Config } from "../config.js";
 import type { Repository, RunProgress } from "../db/store.js";
 import type { CanonicalEvidence, ChainReference, RunRecord } from "../domain/types.js";
@@ -68,7 +69,7 @@ export class RegistryService {
 
   async publish(evidence: CanonicalEvidence, hashes: EvidenceHashes): Promise<ChainReference> {
     if (
-      !this.config.productionReady ||
+      !this.config.chainReady ||
       !this.config.REGISTRY_ADDRESS ||
       !this.config.REGISTRY_WRITER_PRIVATE_KEY ||
       !this.config.XLAYER_RPC_URL
@@ -76,7 +77,8 @@ export class RegistryService {
       return { registry_address: this.config.REGISTRY_ADDRESS ?? zeroAddress, evidence_transaction_hash: zeroHash, block_number: "0", explorer_url: "", published: false };
     }
     const account = privateKeyToAccount(this.config.REGISTRY_WRITER_PRIVATE_KEY as `0x${string}`);
-    const wallet = createWalletClient({ account, chain: xLayer, transport: http(this.config.XLAYER_RPC_URL) });
+    const activeChain = this.config.XLAYER_TESTNET ? xLayerTestnet : xLayer;
+    const wallet = createWalletClient({ account, chain: activeChain, transport: http(this.config.XLAYER_RPC_URL) });
     const publicClient = this.client();
     const canonical = toJcs(evidence);
     const runId = evidence.run_id as `0x${string}`;
@@ -109,16 +111,19 @@ export class RegistryService {
         stringToHex(canonical),
         providerSignature,
       ],
-      chain: xLayer,
+      chain: activeChain,
       account,
     });
     const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash, confirmations: 1, timeout: 60_000 });
     if (receipt.status !== "success") throw new Error("Registry publication reverted");
+    const explorerBase = this.config.XLAYER_TESTNET
+      ? "https://www.oklink.com/xlayer-test/tx"
+      : "https://www.oklink.com/xlayer/tx";
     return {
       registry_address: this.config.REGISTRY_ADDRESS,
       evidence_transaction_hash: txHash,
       block_number: receipt.blockNumber.toString(),
-      explorer_url: `https://www.oklink.com/xlayer/tx/${txHash}`,
+      explorer_url: `${explorerBase}/${txHash}`,
       published: true,
     };
   }
@@ -153,9 +158,9 @@ export class RegistryService {
   }
 
   async rebuildIndex(repository: Repository): Promise<number> {
-    if (!this.config.productionReady || !this.config.REGISTRY_ADDRESS || !this.config.XLAYER_RPC_URL) return 0;
+    if (!this.config.chainReady || !this.config.REGISTRY_ADDRESS || !this.config.XLAYER_RPC_URL) return 0;
     const client = this.client();
-    const logs = await client.getLogs({
+    const logs = await this.getLogsChunked(client, {
       address: this.config.REGISTRY_ADDRESS as `0x${string}`,
       event: registryAbi[2],
       fromBlock: this.config.REGISTRY_DEPLOYMENT_BLOCK,
@@ -178,8 +183,12 @@ export class RegistryService {
     return indexed;
   }
 
+  private activeChain() {
+    return this.config.XLAYER_TESTNET ? xLayerTestnet : xLayer;
+  }
+
   private client(): PublicClient {
-    return createPublicClient({ chain: xLayer, transport: readTransport(this.config) });
+    return createPublicClient({ chain: this.activeChain(), transport: readTransport(this.config) });
   }
 
   private async load(runId: string, client = this.client()): Promise<LoadedChainRun | null> {
@@ -191,7 +200,7 @@ export class RegistryService {
       args: [runId as `0x${string}`],
     }) as unknown as StoredChainRecord;
     if (Number(stored.anchoredAt) === 0) return null;
-    const logs = await client.getLogs({
+    const logs = await this.getLogsChunked(client, {
       address: this.config.REGISTRY_ADDRESS as `0x${string}`,
       event: registryAbi[2],
       args: { runId: runId as `0x${string}` },
@@ -243,6 +252,46 @@ export class RegistryService {
       linkFieldsMatch,
       match,
     };
+  }
+
+  private async getLogsChunked(
+    client: PublicClient,
+    options: {
+      address: `0x${string}`;
+      event: any;
+      args?: any;
+      fromBlock: bigint;
+      toBlock: bigint | "latest";
+      strict?: boolean;
+    }
+  ): Promise<any[]> {
+    const toBlock = options.toBlock === "latest" ? await client.getBlockNumber() : options.toBlock;
+    const fromBlock = options.fromBlock;
+    if (fromBlock > toBlock) return [];
+
+    const chunkSize = 100n;
+    const ranges: { from: bigint; to: bigint }[] = [];
+    for (let start = fromBlock; start <= toBlock; start += chunkSize) {
+      const end = start + chunkSize - 1n > toBlock ? toBlock : start + chunkSize - 1n;
+      ranges.push({ from: start, to: end });
+    }
+
+    const limit = pLimit(10);
+    const tasks = ranges.map((range) =>
+      limit(() =>
+        client.getLogs({
+          address: options.address,
+          event: options.event,
+          args: options.args,
+          fromBlock: range.from,
+          toBlock: range.to,
+          strict: options.strict,
+        })
+      )
+    );
+
+    const results = await Promise.all(tasks);
+    return results.flat();
   }
 }
 
@@ -318,7 +367,7 @@ function recordFromChain(
       registry_address: registryAddress,
       evidence_transaction_hash: transactionHash,
       block_number: blockNumber?.toString() ?? "0",
-      explorer_url: `https://www.oklink.com/xlayer/tx/${transactionHash}`,
+      explorer_url: `https://www.oklink.com/xlayer/tx/${transactionHash}`, // explorer is resolved at publish time
       published: true,
     },
     remediation: evidence.remediation,

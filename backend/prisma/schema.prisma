@@ -8,38 +8,37 @@ datasource db {
 }
 
 model Run {
-  id                       String       @id
-  idempotencyKey           String       @unique
-  state                    String
-  target                   String
-  label                    String?
-  passportStatus           String?
-  gates                    Json?
-  evidence                 Json?
-  record                   Json?
-  canonicalEvidenceJcs     String?
-  evidenceHash             String?
-  manifestHash             String?
-  inputHash                String?
-  normalizedResultHash     String?
-  sourceRevision           String?
-  buildCommit              String?
-  previousRunId            String?
-  provider                 String?
-  signatureState           String?
-  evidenceTransaction      String?
-  evidenceBlock            String?
-  error                    String?
-  createdAt                DateTime     @default(now())
-  updatedAt                DateTime     @updatedAt
-  invocations              Invocation[]
-  payments                 Payment[]
+  id                   String       @id
+  idempotencyKey       String       @unique
+  state                String
+  target               String
+  label                String?
+  passportStatus       String?
+  gates                Json?
+  evidence             Json?
+  record               Json?
+  canonicalEvidenceJcs String?
+  evidenceHash         String?
+  manifestHash         String?
+  inputHash            String?
+  normalizedResultHash String?
+  sourceRevision       String?
+  buildCommit          String?
+  previousRunId        String?
+  provider             String?
+  signatureState       String?
+  evidenceTransaction  String?
+  evidenceBlock        String?
+  error                String?
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+  invocations          Invocation[]
+  payments             Payment[]
 }
 
 model Invocation {
   id             String  @id @default(cuid())
   runId          String
-  run            Run     @relation(fields: [runId], references: [id], onDelete: Cascade)
   kind           String
   sequence       Int
   input          Json
@@ -48,6 +47,7 @@ model Invocation {
   comparisons    Json
   classification String?
   latencyMs      Int
+  run            Run     @relation(fields: [runId], references: [id], onDelete: Cascade)
 
   @@unique([runId, kind, sequence])
 }
@@ -55,7 +55,6 @@ model Invocation {
 model Payment {
   id                    String   @id
   runId                 String
-  run                   Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
   kind                  String
   payer                 String?
   recipient             String?
@@ -66,6 +65,7 @@ model Payment {
   settlementTransaction String?
   status                String
   createdAt             DateTime @default(now())
+  run                   Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
 }
 
 model Provider {
@@ -84,10 +84,10 @@ model Fixture {
 }
 
 model CampaignLog {
-  id           String   @id @default(cuid())
-  category     String
-  occurredAt   DateTime
-  publicUrl    String?
-  evidence     Json
-  consented    Boolean
+  id         String   @id @default(cuid())
+  category   String
+  occurredAt DateTime
+  publicUrl  String?
+  evidence   Json
+  consented  Boolean
 }

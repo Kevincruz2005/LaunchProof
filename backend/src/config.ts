@@ -23,6 +23,7 @@ const EnvSchema = z.object({
   OKX_AI_LISTING_URL: z.string().url().optional().or(z.literal("").transform(() => undefined)),
   DEMO_VIDEO_URL: optionalUrl,
   REFERENCE_PAYMENT_ID: z.string().min(1).max(200).optional().or(z.literal("").transform(() => undefined)),
+  XLAYER_TESTNET: bool,
   XLAYER_RPC_URL: optionalUrl,
   XLAYER_FALLBACK_RPC_URL: optionalUrl,
   REGISTRY_ADDRESS: optionalAddress,
@@ -56,6 +57,13 @@ export type Config = ReturnType<typeof loadConfig>;
 
 export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
   const parsed = EnvSchema.parse(source);
+  // chainReady: can publish to registry without x402 — works on testnet too
+  const chainReady = Boolean(
+    parsed.XLAYER_RPC_URL &&
+      parsed.REGISTRY_ADDRESS &&
+      parsed.REGISTRY_DEPLOYMENT_BLOCK > 0n &&
+      parsed.REGISTRY_WRITER_PRIVATE_KEY,
+  );
   const productionReady = Boolean(
     parsed.X402_ENABLED &&
       parsed.XLAYER_RPC_URL &&
@@ -96,6 +104,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
   return {
     ...parsed,
     productionReady,
+    chainReady,
     targetAllowlist: new Set(
       parsed.TARGET_ALLOWLIST.split(",")
         .map((value) => value.trim().toLowerCase())
@@ -104,8 +113,11 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
   };
 }
 
-export const NETWORK = "eip155:196" as const;
-export const CHAIN_ID = 196;
+// Mainnet constants (eip155:196). Testnet uses eip155:195 but x402 is not
+// available on testnet — payment gates will be not_tested in testnet mode.
+export const NETWORK = `eip155:${process.env.NEXT_PUBLIC_CHAIN_ID ?? "196"}`;
+export const TESTNET_CHAIN_ID = 1952;
+export const CHAIN_ID = Number.parseInt(process.env.NEXT_PUBLIC_CHAIN_ID ?? "196", 10);
 export const USDT0_ADDRESS = "0x779ded0c9e1022225f8e0630b35a9b54be713736" as const;
 export const GENESIS_PRICE = "$0.01";
 export const RENEWAL_PRICE = "$0.10";

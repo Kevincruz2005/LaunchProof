@@ -30,7 +30,7 @@ const limitations = [
 ];
 
 function createRunId(publicRun: boolean): string {
-  return publicRun ? `0x${randomBytes(32).toString("hex")}` : `local-${randomBytes(12).toString("hex")}`;
+  return `0x${randomBytes(32).toString("hex")}`;
 }
 
 function manifestUrl(input: string): string {

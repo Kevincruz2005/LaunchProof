@@ -33,7 +33,7 @@ export async function safeRequest(
       connect: {
         servername: current.hostname,
         lookup: (_hostname, _options, callback) => {
-          callback(null, selected.address, selected.family);
+          callback(null, [selected]);
         },
       },
     });
@@ -46,6 +46,8 @@ export async function safeRequest(
           accept: "application/json, text/event-stream",
           "content-type": "application/json",
           "user-agent": "LaunchProof/1.0 bounded-rehearsal",
+          "bypass-tunnel-reminder": "true",
+          "x-tunnel-skip-bypass": "true",
           ...init.headers,
         },
         headersTimeout: init.timeoutMs ?? 8_000,

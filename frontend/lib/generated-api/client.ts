@@ -66,16 +66,18 @@ export async function connectWallet(): Promise<`0x${string}`> {
   const accounts = (await window.ethereum.request({ method: "eth_requestAccounts" })) as string[];
   const account = accounts[0];
   if (!account || !/^0x[0-9a-fA-F]{40}$/.test(account)) throw new Error("The wallet did not return an account.");
+  const TARGET_CHAIN_ID = Number.parseInt(process.env.NEXT_PUBLIC_CHAIN_ID ?? "196", 10);
+  const targetChainHex = `0x${TARGET_CHAIN_ID.toString(16)}`;
   const chainId = (await window.ethereum.request({ method: "eth_chainId" })) as string;
-  if (Number.parseInt(chainId, 16) !== 196) {
+  if (Number.parseInt(chainId, 16) !== TARGET_CHAIN_ID) {
     try {
-      await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0xc4" }] });
+      await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: targetChainHex }] });
     } catch {
       const rpc = process.env.NEXT_PUBLIC_XLAYER_RPC_URL;
-      if (!rpc) throw new Error("Add X Layer mainnet (chain 196) to the wallet before continuing.");
+      if (!rpc) throw new Error(`Add X Layer (chain ${TARGET_CHAIN_ID}) to the wallet before continuing.`);
       await window.ethereum.request({
         method: "wallet_addEthereumChain",
-        params: [{ chainId: "0xc4", chainName: "X Layer", nativeCurrency: { name: "OKB", symbol: "OKB", decimals: 18 }, rpcUrls: [rpc], blockExplorerUrls: ["https://www.oklink.com/xlayer"] }],
+        params: [{ chainId: targetChainHex, chainName: TARGET_CHAIN_ID === 1952 ? "X Layer Testnet" : "X Layer", nativeCurrency: { name: "OKB", symbol: "OKB", decimals: 18 }, rpcUrls: [rpc], blockExplorerUrls: [TARGET_CHAIN_ID === 1952 ? "https://www.oklink.com/xlayer-test" : "https://www.oklink.com/xlayer"] }],
       });
     }
   }
@@ -104,9 +106,12 @@ export async function submitPaidRun(input: {
     });
   } else {
     if (!window.ethereum || !input.account) throw new Error("Connect a wallet before approving payment.");
-    const [{ createWalletClient, custom }, { xLayer }, { ExactEvmScheme, toClientEvmSigner }, { wrapFetchWithPaymentFromConfig }] =
+    const TARGET_CHAIN_ID = Number.parseInt(process.env.NEXT_PUBLIC_CHAIN_ID ?? "196", 10);
+    const networkEip = `eip155:${TARGET_CHAIN_ID}`;
+    const [{ createWalletClient, custom }, { xLayer, xLayerTestnet }, { ExactEvmScheme, toClientEvmSigner }, { wrapFetchWithPaymentFromConfig }] =
       await Promise.all([import("viem"), import("viem/chains"), import("@okxweb3/x402-evm"), import("@okxweb3/x402-fetch")]);
-    const wallet = createWalletClient({ account: input.account, chain: xLayer, transport: custom(window.ethereum) });
+    const chain = TARGET_CHAIN_ID === 1952 ? xLayerTestnet : xLayer;
+    const wallet = createWalletClient({ account: input.account, chain, transport: custom(window.ethereum) });
     const signer = toClientEvmSigner({
       address: input.account,
       signTypedData: async (message) =>
@@ -119,8 +124,8 @@ export async function submitPaidRun(input: {
         } as Parameters<typeof wallet.signTypedData>[0]),
     });
     const paidFetch = wrapFetchWithPaymentFromConfig(fetch, {
-      schemes: [{ network: "eip155:196", client: new ExactEvmScheme(signer) }],
-      policies: [(_version, requirements) => requirements.filter((item) => item.network === "eip155:196" && item.scheme === "exact")],
+      schemes: [{ network: networkEip, client: new ExactEvmScheme(signer) }],
+      policies: [(_version, requirements) => requirements.filter((item) => item.network === networkEip && item.scheme === "exact")],
     });
     response = await paidFetch(`${API_BASE}${route}`, { method: "POST", headers: { "content-type": "application/json", "idempotency-key": input.idempotencyKey }, body });
   }
