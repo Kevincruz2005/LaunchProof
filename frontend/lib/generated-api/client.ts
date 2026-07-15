@@ -107,7 +107,7 @@ export async function submitPaidRun(input: {
   } else {
     if (!window.ethereum || !input.account) throw new Error("Connect a wallet before approving payment.");
     const TARGET_CHAIN_ID = Number.parseInt(process.env.NEXT_PUBLIC_CHAIN_ID ?? "196", 10);
-    const networkEip = `eip155:${TARGET_CHAIN_ID}`;
+    const networkEip = `eip155:${TARGET_CHAIN_ID}` as `${string}:${string}`;
     const [{ createWalletClient, custom }, { xLayer, xLayerTestnet }, { ExactEvmScheme, toClientEvmSigner }, { wrapFetchWithPaymentFromConfig }] =
       await Promise.all([import("viem"), import("viem/chains"), import("@okxweb3/x402-evm"), import("@okxweb3/x402-fetch")]);
     const chain = TARGET_CHAIN_ID === 1952 ? xLayerTestnet : xLayer;
