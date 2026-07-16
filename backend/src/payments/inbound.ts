@@ -30,14 +30,14 @@ export function createPaymentMiddleware(config: Config, repository: Repository):
     ...(config.OKX_BASE_URL ? { baseURL: config.OKX_BASE_URL } : {}),
   });
   const server = new x402ResourceServer(facilitator);
-  server.register(NETWORK, new ExactEvmScheme());
+  server.register(NETWORK as `${string}:${string}`, new ExactEvmScheme());
   const routes = {
     "POST /api/rehearsals": route(GENESIS_PRICE, config.PAYOUT_ADDRESS as `0x${string}`, "Genesis Launch Rehearsal"),
     "POST /mcp/rehearse": route(GENESIS_PRICE, config.PAYOUT_ADDRESS as `0x${string}`, "Genesis Launch Rehearsal MCP"),
     "POST /api/renewals": route(RENEWAL_PRICE, config.PAYOUT_ADDRESS as `0x${string}`, "Renew Service Passport"),
     "POST /mcp/renew": route(RENEWAL_PRICE, config.PAYOUT_ADDRESS as `0x${string}`, "Renew Service Passport MCP"),
   };
-  const httpServer = new x402HTTPResourceServer(server, routes);
+  const httpServer = new x402HTTPResourceServer(server, routes as any); // eslint-disable-line @typescript-eslint/no-explicit-any
   const inFlight = new Set<string>();
   httpServer.onProtectedRequest(async (context) => {
     const key = idempotencyKey(context.adapter.getHeader("idempotency-key"), context.adapter.getBody?.());

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "version": 2,
+  "name": "launchproof-backend",
+  "installCommand": "corepack enable && pnpm install --filter @launchproof/backend...",
+  "buildCommand": "cp -r schema backend/schema-bundled && cd backend && prisma generate && npx tsc -p tsconfig.json",
+  "outputDirectory": "backend/dist",
+  "functions": {
+    "backend/api/index.ts": {
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/backend/api/index" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET,POST,OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "content-type,payment,payment-signature,x-payment,x-launchproof-local-run,idempotency-key" },
+        { "key": "Access-Control-Expose-Headers", "value": "payment-response,location" }
+      ]
+    }
+  ]
+}

@@ -15,6 +15,31 @@ import { handleMcp } from "../mcp/server.js";
 import { RegistryService } from "../chain/registry.js";
 import { hashJcs } from "../evidence/canonical.js";
 
+/** Resolve the path to the /schema directory regardless of deployment context.
+ * - Classic server: schema/ is 3 levels up from src/rest/ (project root)
+ * - Vercel serverless: schema-bundled/ is copied next to backend/ during CI build
+ */
+function resolveSchemaRoot(): string {
+  const candidates = [
+    // Local / Docker: monorepo root schema/
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../schema"),
+    // Vercel build artifact: schema-bundled/ inside backend/ after cp -r
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../schema-bundled"),
+    // Fallback: schema/ relative to CWD
+    path.join(process.cwd(), "schema"),
+    path.join(process.cwd(), "backend", "schema-bundled"),
+  ];
+  for (const candidate of candidates) {
+    try {
+      readFileSync(path.join(candidate, "openapi.json"));
+      return candidate;
+    } catch {
+      // try next
+    }
+  }
+  return candidates[0]!; // let downstream readFileSync surface the real error
+}
+
 const requestSchema = z.object({
   url: z.string().url(),
   idempotency_key: z.string().min(8).max(120),
@@ -82,6 +107,13 @@ export function createApp(config: Config, repository: Repository = new MemoryRep
     if (body.previous_run_id) throw new HttpError(400, "Use /api/renewals when previous_run_id is supplied");
     const run = await service.reserve(body.url, body.idempotency_key);
     if (run.state === "payment_required") {
+      if (process.env.VERCEL) {
+        // Vercel serverless: run synchronously before response — no background tasks after send
+        const payment = launchPaymentReference(request, response, "0.01", "/api/rehearsals", config);
+        const completed = await service.runReserved(run.run_id, { url: body.url, idempotency_key: body.idempotency_key, payment }, true);
+        response.status("canonical_evidence" in completed ? 200 : 202).location(`/runs/${completed.run_id}`).json(completed);
+        return;
+      }
       afterSettlement(request, response, repository, run.run_id, async () => {
         const payment = launchPaymentReference(request, response, "0.01", "/api/rehearsals", config);
         await service.runReserved(run.run_id, { url: body.url, idempotency_key: body.idempotency_key, payment }, false);
@@ -95,6 +127,17 @@ export function createApp(config: Config, repository: Repository = new MemoryRep
     if (!body.previous_run_id) throw new HttpError(400, "previous_run_id is required");
     const run = await service.reserve(body.url, body.idempotency_key);
     if (run.state === "payment_required") {
+      if (process.env.VERCEL) {
+        // Vercel serverless: run synchronously before response
+        const payment = launchPaymentReference(request, response, "0.10", "/api/renewals", config);
+        const completed = await service.runReserved(
+          run.run_id,
+          { url: body.url, idempotency_key: body.idempotency_key, payment, previous_run_id: body.previous_run_id! },
+          true,
+        );
+        response.status("canonical_evidence" in completed ? 200 : 202).location(`/runs/${completed.run_id}`).json(completed);
+        return;
+      }
       afterSettlement(request, response, repository, run.run_id, async () => {
         const payment = launchPaymentReference(request, response, "0.10", "/api/renewals", config);
         await service.runReserved(
@@ -202,11 +245,13 @@ export function createApp(config: Config, repository: Repository = new MemoryRep
     ],
   }));
 
-  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../");
-  const openapi = JSON.parse(readFileSync(path.join(root, "schema", "openapi.json"), "utf8")) as Record<string, unknown>;
+  const schemaRoot = resolveSchemaRoot();
+  const openapi = JSON.parse(readFileSync(path.join(schemaRoot, "openapi.json"), "utf8")) as Record<string, unknown>;
+  const launchContractSchema = JSON.parse(readFileSync(path.join(schemaRoot, "launch-contract.schema.json"), "utf8")) as Record<string, unknown>;
+  const registryAbi = JSON.parse(readFileSync(path.join(schemaRoot, "registry.abi.json"), "utf8")) as unknown[];
   app.get("/schema/openapi.json", freeLimiter, (_request, response) => response.json({ ...openapi, servers: [{ url: config.PUBLIC_API_BASE_URL }] }));
-  app.get("/schema/launch-contract.schema.json", freeLimiter, (_request, response) => response.sendFile(path.join(root, "schema", "launch-contract.schema.json")));
-  app.get("/schema/registry.abi.json", freeLimiter, (_request, response) => response.sendFile(path.join(root, "schema", "registry.abi.json")));
+  app.get("/schema/launch-contract.schema.json", freeLimiter, (_request, response) => response.json(launchContractSchema));
+  app.get("/schema/registry.abi.json", freeLimiter, (_request, response) => response.json(registryAbi));
 
   app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
     if (error instanceof z.ZodError) {

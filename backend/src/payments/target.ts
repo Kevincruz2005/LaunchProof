@@ -79,7 +79,7 @@ export class TargetPaymentService {
       return new Response(result.text, { status: result.status, headers: result.headers });
     };
     const paidFetch = wrapFetchWithPaymentFromConfig(boundedFetch, {
-      schemes: [{ network: NETWORK, client: new ExactEvmScheme(signer) }],
+      schemes: [{ network: NETWORK as `${string}:${string}`, client: new ExactEvmScheme(signer) }],
       policies: [signedTermsOnly],
     });
     const response = await paidFetch(terms.resource_url, {
