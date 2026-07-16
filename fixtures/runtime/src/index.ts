@@ -63,7 +63,7 @@ function config(variant: FixtureVariant): FixtureConfig {
   };
 }
 
-export function startFixture(variant: FixtureVariant) {
+export function startFixture(variant: FixtureVariant): express.Express {
   const settings = config(variant);
   const account = privateKeyToAccount(settings.providerKey);
   const app = express();
@@ -105,9 +105,12 @@ export function startFixture(variant: FixtureVariant) {
   app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
     response.status(500).json({ error: error instanceof Error ? error.message : "fixture_error" });
   });
-  app.listen(settings.port, "0.0.0.0", () => {
-    process.stdout.write(JSON.stringify({ event: "fixture_started", variant, port: settings.port, provider: account.address }) + "\n");
-  });
+  if (process.env.VERCEL !== "1") {
+    app.listen(settings.port, "0.0.0.0", () => {
+      process.stdout.write(JSON.stringify({ event: "fixture_started", variant, port: settings.port, provider: account.address }) + "\n");
+    });
+  }
+  return app;
 }
 
 function createPaidMiddleware(settings: FixtureConfig): RequestHandler {

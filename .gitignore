@@ -13,3 +13,6 @@ backend/prisma/*.db*
 *.log
 *.tsbuildinfo
 .DS_Store
+.vercel
+.env*
+backend/prisma/client/

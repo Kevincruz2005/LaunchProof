@@ -1,7 +1,7 @@
-import type { Prisma as PrismaTypes, PrismaClient } from "@prisma/client";
+import type { Prisma as PrismaTypes, PrismaClient } from "../../prisma/client/index.d.ts";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
-const { Prisma, PrismaClient: PrismaClientClass } = require("@prisma/client");
+const { Prisma, PrismaClient: PrismaClientClass } = require("../../prisma/client/index.js");
 import type { PaymentReference, RunRecord, RunState } from "../domain/types.js";
 import type { Repository, RunProgress, StoredRun } from "./store.js";
 
