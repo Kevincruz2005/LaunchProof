@@ -368,10 +368,15 @@ function fixtureCatalog(config: Config) {
     let launch_contract = base ? `https://${variant}.${base}/.well-known/launch-contract.json` : null;
     let health = base ? `https://${variant}.${base}/healthz` : null;
     
-    // Inject our permanently deployed dummy agent for the healthy fixture!
-    if (!base && variant === "healthy") {
-      launch_contract = "https://launchproof-demo-agent.vercel.app/.well-known/launch-contract.json";
-      health = "https://launchproof-demo-agent.vercel.app/healthz";
+    // Inject our permanently deployed dummy agents!
+    if (!base) {
+      if (variant === "healthy") {
+        launch_contract = "https://launchproof-demo-agent.vercel.app/.well-known/launch-contract.json";
+        health = "https://launchproof-demo-agent.vercel.app/healthz";
+      } else {
+        launch_contract = `https://launchproof-demo-${variant}.vercel.app/.well-known/launch-contract.json`;
+        health = `https://launchproof-demo-${variant}.vercel.app/healthz`;
+      }
     }
 
     return {
