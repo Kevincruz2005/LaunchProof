@@ -5,7 +5,7 @@
   "buildCommand": "mkdir -p public && echo '{\"name\":\"launchproof-backend\"}' > public/index.json && cp -r schema api/schema-bundled 2>/dev/null || true",
   "outputDirectory": "public",
   "functions": {
-    "api/index.ts": {
+    "api/index.mjs": {
       "maxDuration": 60
     }
   },
