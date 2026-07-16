@@ -364,11 +364,21 @@ function fixtureCatalog(config: Config) {
     ["schema-drift", "contract_correct or fresh_challenge fails with schema_drift"],
     ["timeout", "the relevant gate fails with timeout"],
   ];
-  return fixtures.map(([variant, intendedOutcome]) => ({
-    variant,
-    label: "fixture",
-    launch_contract: base ? `https://${variant}.${base}/.well-known/launch-contract.json` : null,
-    health: base ? `https://${variant}.${base}/healthz` : null,
+  return fixtures.map(([variant, intendedOutcome]) => {
+    let launch_contract = base ? `https://${variant}.${base}/.well-known/launch-contract.json` : null;
+    let health = base ? `https://${variant}.${base}/healthz` : null;
+    
+    // Inject our permanently deployed dummy agent for the healthy fixture!
+    if (!base && variant === "healthy") {
+      launch_contract = "https://launchproof-demo-agent.vercel.app/.well-known/launch-contract.json";
+      health = "https://launchproof-demo-agent.vercel.app/healthz";
+    }
+
+    return {
+      variant,
+      label: "fixture",
+      launch_contract,
+      health,
     source: `${config.SOURCE_REPOSITORY}/tree/${config.BUILD_COMMIT_SHA}/fixtures/invoice-normalizer-${variant}`,
     declaration_address: declarations[variant] ?? null,
     intended_outcome: intendedOutcome,
