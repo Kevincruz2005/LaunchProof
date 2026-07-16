@@ -33,8 +33,9 @@ function buildApp() {
     const repository = new LoggingRepository(
       config.DATABASE_URL ? new PrismaRepository() : new MemoryRepository(),
     );
-    if (config.chainReady) {
-      await new RegistryService(config).rebuildIndex(repository).catch(() => {
+    if (config.chainReady && !config.DATABASE_URL) {
+      // Do not await this on Vercel to avoid 10s cold start timeouts
+      new RegistryService(config).rebuildIndex(repository).catch(() => {
         // Non-fatal: chain index rebuild may fail if RPC unavailable at cold start
       });
     }
