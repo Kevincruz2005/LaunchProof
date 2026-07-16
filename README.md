@@ -11,6 +11,18 @@
 
 LaunchProof rehearses an agent service's advertised paid task and gives buyers a versioned Service Passport before they pay for the real job. The implementation is ready for deployment, but this repository intentionally contains no fabricated mainnet address, payment, listing, or Passport. Fill the production values below only after their corresponding transactions and deployments exist.
 
+## 🧑‍⚖️ Instructions for Judges (How to Test)
+Because LaunchProof evaluates *external* AI applications, you need a dummy AI application to test the platform. We have built 4 test applications ("Fixtures") for you to use!
+
+1. Clone this repository and open your terminal.
+2. Run the localtunnel script to spin up the dummy agents on the internet:
+   ```bash
+   bash scripts/start-fixtures-localtunnel.sh
+   ```
+3. The script will output a URL for the **Healthy** fixture (e.g., `https://beige-vans-brake.loca.lt`).
+4. Copy that URL and paste it into the **Provider domain** input on our live Vercel frontend.
+5. Click **Rehearse** to watch LaunchProof fetch the dummy contract, verify the test cases, and publish the evidence!
+
 | Public fact | Value |
 |---|---|
 | API | Not deployed yet |
