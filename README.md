@@ -12,12 +12,16 @@
 LaunchProof rehearses an agent service's advertised paid task and gives buyers a versioned Service Passport before they pay for the real job. The implementation is ready for deployment, but this repository intentionally contains no fabricated mainnet address, payment, listing, or Passport. Fill the production values below only after their corresponding transactions and deployments exist.
 
 ## 🧑‍⚖️ Instructions for Judges (How to Test)
-Because LaunchProof evaluates *external* AI applications, you need a dummy AI application to test the platform. We have permanently deployed a test AI Agent ("Fixture") to Vercel for you to use!
+Because LaunchProof evaluates *external* AI applications, you need a dummy AI application to test the platform. We have permanently deployed **4 different test AI Agents** ("Fixtures") to Vercel for you to use!
 
 1. Go to our live LaunchProof Web App: `https://launchproof-frontend.vercel.app`
-2. Copy the URL of our dummy AI Agent: `https://launchproof-demo-agent.vercel.app`
+2. Copy **one** of the URLs of our dummy AI Agents below:
+   * **Healthy (Passes all tests):** `https://launchproof-demo-agent.vercel.app`
+   * **Invalid Output (Fails logic):** `https://launchproof-demo-invalid-output.vercel.app`
+   * **Schema Drift (Fails schema):** `https://launchproof-demo-schema-drift.vercel.app`
+   * **Timeout (Fails latency):** `https://launchproof-demo-timeout.vercel.app`
 3. Paste the dummy URL into the **Provider domain** input on the LaunchProof page.
-4. Click **Rehearse** to watch LaunchProof fetch the dummy contract, actively test the agent's MCP responses, verify the evidence hashes, and successfully publish the run directly to the X Layer Testnet!
+4. Click **Rehearse** to watch LaunchProof actively test the agent, verify the evidence hashes, and successfully publish the run directly to the X Layer Testnet!
 
 | Public fact | Value |
 |---|---|
