@@ -1,17 +1,15 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
-  "name": "launchproof-backend",
   "installCommand": "corepack enable && pnpm install --filter @launchproof/backend...",
-  "buildCommand": "cp -r schema backend/schema-bundled && cd backend && prisma generate && npx tsc -p tsconfig.json",
-  "outputDirectory": "backend/dist",
+  "buildCommand": "cp -r schema api/schema-bundled",
   "functions": {
-    "backend/api/index.ts": {
+    "api/index.ts": {
       "maxDuration": 60
     }
   },
   "rewrites": [
-    { "source": "/(.*)", "destination": "/backend/api/index" }
+    { "source": "/(.*)", "destination": "/api/index" }
   ],
   "headers": [
     {

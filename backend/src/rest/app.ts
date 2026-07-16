@@ -25,8 +25,11 @@ function resolveSchemaRoot(): string {
     path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../schema"),
     // Vercel build artifact: schema-bundled/ inside backend/ after cp -r
     path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../schema-bundled"),
-    // Fallback: schema/ relative to CWD
+    // Vercel: schema-bundled copied into api/ directory
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../api/schema-bundled"),
+    // Fallback: schema/ relative to CWD (process root)
     path.join(process.cwd(), "schema"),
+    path.join(process.cwd(), "api", "schema-bundled"),
     path.join(process.cwd(), "backend", "schema-bundled"),
   ];
   for (const candidate of candidates) {
