@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
   "installCommand": "corepack enable && pnpm install --filter @launchproof/backend...",
-  "buildCommand": "cd backend && pnpm prisma generate && cd .. && mkdir -p public && echo '{\"name\":\"launchproof-backend\"}' > public/index.json && cp -r schema api/schema-bundled 2>/dev/null || true",
+  "buildCommand": "cd backend && pnpm prisma generate && cd .. && mkdir -p public && echo '{\"name\":\"launchproof\"}' > public/index.json && cp -r schema api/schema-bundled 2>/dev/null || true",
   "outputDirectory": "public",
   "functions": {
     "api/index.mjs": {
