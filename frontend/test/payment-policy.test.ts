@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   assertTestnetPaymentAnchors,
+  apiGet,
   connectWallet,
   filterExactPaymentRequirements,
   forgetConnectedWallet,
@@ -180,5 +181,17 @@ describe("frontend testnet payment policy", () => {
     expect(response.status).toBe(202);
     expect(sent[0]?.headers.has("access-control-expose-headers")).toBe(false);
     expect(sent[0]?.headers.get("payment-signature")).toBe("signed-payload");
+  });
+
+  it("retries a transient public API fetch before showing an error", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ match: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(apiGet<{ match: boolean }>("/verify/test-run")).resolves.toEqual({ match: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

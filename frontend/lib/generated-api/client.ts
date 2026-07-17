@@ -116,9 +116,23 @@ const GENESIS_AMOUNT_ATOMIC = "10000";
 const RENEWAL_AMOUNT_ATOMIC = "100000";
 
 export async function apiGet<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
-  if (!response.ok) throw new Error(await responseError(response));
-  return response.json() as Promise<T>;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
+    } catch (cause) {
+      lastError = cause;
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 750 * (attempt + 1)));
+      continue;
+    }
+    if (response.ok) return response.json() as Promise<T>;
+    const error = new Error(await responseError(response));
+    if (response.status < 500) throw error;
+    lastError = error;
+    if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 750 * (attempt + 1)));
+  }
+  throw lastError instanceof Error ? lastError : new Error("The API did not respond after three attempts.");
 }
 
 export async function getProjectCard(): Promise<ProjectCard> {

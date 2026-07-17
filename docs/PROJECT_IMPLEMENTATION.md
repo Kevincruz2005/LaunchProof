@@ -462,7 +462,7 @@ The following checks passed on the release code and live deployment:
 | Check | Result |
 |---|---|
 | Backend Vitest | 12 files, 81 tests passed |
-| Frontend Vitest | 1 file, 7 tests passed |
+| Frontend Vitest | 1 file, 8 tests passed |
 | Fixture runtime Vitest | 1 file, 7 tests passed |
 | Solidity Foundry | 9 tests passed, 0 failed |
 | Backend TypeScript | passed |
