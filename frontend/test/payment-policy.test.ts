@@ -4,6 +4,7 @@ import {
   filterExactPaymentRequirements,
   rememberConnectedWallet,
   restoreConnectedWallet,
+  withoutResponseOnlyCorsHeaders,
   type ProjectCard,
 } from "../lib/generated-api/client.js";
 
@@ -115,5 +116,23 @@ describe("frontend testnet payment policy", () => {
     rememberConnectedWallet(account);
     expect(await restoreConnectedWallet(projectCard())).toBe(account);
     expect(request.mock.calls.map(([input]) => input.method)).toEqual(["eth_accounts", "eth_chainId"]);
+  });
+
+  it("removes the response-only CORS header from an OKX paid retry", async () => {
+    const sent: Request[] = [];
+    const safeFetch = withoutResponseOnlyCorsHeaders(async (input, init) => {
+      sent.push(new Request(input, init));
+      return new Response(null, { status: 202 });
+    });
+    const response = await safeFetch("https://api.example.test/paid", {
+      method: "POST",
+      headers: {
+        "access-control-expose-headers": "PAYMENT-RESPONSE",
+        "payment-signature": "signed-payload",
+      },
+    });
+    expect(response.status).toBe(202);
+    expect(sent[0]?.headers.has("access-control-expose-headers")).toBe(false);
+    expect(sent[0]?.headers.get("payment-signature")).toBe("signed-payload");
   });
 });

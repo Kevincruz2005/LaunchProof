@@ -40,6 +40,17 @@ describe("public and paid routes", () => {
     expect(response.headers["access-control-expose-headers"]?.toLowerCase().split(",")).toContain("payment-required");
   });
 
+  it("permits the OKX x402 paid-retry preflight without trusting its response-only header", async () => {
+    const response = await request(app)
+      .options("/api/rehearsals")
+      .set("Origin", "http://localhost:3000")
+      .set("Access-Control-Request-Method", "POST")
+      .set("Access-Control-Request-Headers", "content-type,idempotency-key,payment-signature,access-control-expose-headers");
+    expect(response.status).toBe(204);
+    const allowed = response.headers["access-control-allow-headers"]?.toLowerCase().split(",");
+    expect(allowed).toEqual(expect.arrayContaining(["payment-signature", "access-control-expose-headers"]));
+  });
+
   it("publishes the exact no-SLA disclaimer", async () => {
     const response = await request(app).get("/status");
     expect(response.body.disclaimer).toContain("It is not an uptime guarantee or a service-level agreement");

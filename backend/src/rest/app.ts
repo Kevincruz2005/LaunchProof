@@ -46,7 +46,11 @@ export function createApp(
       return callback(new Error("Origin is not allowed"));
     },
     methods: ["GET", "POST"],
-    allowedHeaders: ["content-type", "payment", "payment-signature", "x-payment", "x-launchproof-local-run", "idempotency-key"],
+    // OKX x402-fetch 0.1.0 adds Access-Control-Expose-Headers to its paid
+    // retry. It is response-only and ignored by LaunchProof, but accepting it
+    // here keeps that official client compatible while our browser wrapper
+    // removes it before sending.
+    allowedHeaders: ["content-type", "payment", "payment-signature", "x-payment", "x-launchproof-local-run", "idempotency-key", "access-control-expose-headers"],
     // x402-fetch reads the initial challenge from PAYMENT-REQUIRED in browser
     // JavaScript. CORS hides non-safelisted response headers unless the API
     // explicitly exposes them.

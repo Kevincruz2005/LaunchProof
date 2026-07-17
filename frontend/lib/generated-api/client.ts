@@ -339,7 +339,7 @@ async function submitWithPayment(input: {
       } as Parameters<typeof wallet.signTypedData>[0]),
   });
 
-  const paidFetch = wrapFetchWithPaymentFromConfig(fetch, {
+  const paidFetch = wrapFetchWithPaymentFromConfig(withoutResponseOnlyCorsHeaders(fetch), {
     schemes: [{ network: chain.network, client: new ExactEvmScheme(signer) }],
     policies: [(_version, requirements) => filterExactPaymentRequirements(requirements, {
       network: chain.network,
@@ -354,6 +354,17 @@ async function submitWithPayment(input: {
     headers: { "content-type": "application/json", "idempotency-key": input.idempotencyKey },
     body: input.body,
   });
+}
+
+export function withoutResponseOnlyCorsHeaders(fetchImplementation: typeof fetch): typeof fetch {
+  return async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    // @okxweb3/x402-fetch 0.1.0 sets this response-only CORS header on its
+    // signed retry. Sending it triggers an unnecessary browser preflight and
+    // can be rejected by otherwise-correct APIs.
+    request.headers.delete("access-control-expose-headers");
+    return fetchImplementation(request);
+  };
 }
 
 export function filterExactPaymentRequirements(
