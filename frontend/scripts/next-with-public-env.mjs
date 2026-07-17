@@ -10,8 +10,11 @@ const childEnv = { ...process.env };
 try {
   const values = parseEnv(await readFile(rootEnvPath, "utf8"));
   for (const [name, value] of Object.entries(values)) {
-    if (name.startsWith("NEXT_PUBLIC_")) childEnv[name] = value;
-    else delete childEnv[name];
+    if (name.startsWith("NEXT_PUBLIC_")) {
+      if (!childEnv[name]) childEnv[name] = value;
+    } else {
+      delete childEnv[name];
+    }
   }
 } catch (error) {
   if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
