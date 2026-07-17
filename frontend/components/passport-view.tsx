@@ -61,7 +61,7 @@ export function PassportView({ passport }: { passport: Passport }) {
         </div>
         <div className="passport-actions">
           <StatusBadge status={passport.passport_status} />
-          {canShare ? <button className="secondary" type="button" onClick={share}>Share verified testnet link</button> : null}
+          {canShare ? <button className="secondary passport-share" type="button" onClick={share}>Share verified testnet link</button> : null}
         </div>
       </section>
       {passport.payment.status !== "settled" ? <aside className="observed-note"><strong>Unpaid evidence.</strong> This run records LaunchProof payment status <code>{passport.payment.status}</code>. Registry publication, if present, is not proof of payment.</aside> : null}

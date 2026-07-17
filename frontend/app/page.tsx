@@ -1,14 +1,14 @@
 import Link from "next/link";
-import { RehearsalForm } from "../components/rehearsal-form";
 import { Disclaimers } from "../components/brand";
 import { RecentPassports } from "../components/recent-passports";
+import { WalletControl } from "../components/wallet-control";
 
 export default function Home() {
   return (
     <main>
       <section className="home-hero">
         <div className="hero-copy"><p className="eyebrow">Service rehearsal · configured X Layer network</p><h1>A listing is a promise.<br /><em>Rehearse it.</em></h1><p className="lede">LaunchProof runs the declared sample, a controlled invalid call, and three fresh challenges. It reports declaration verification, payment, and publication separately, and marks evidence published only after a real registry transaction succeeds.</p><div className="proof-strip"><span><strong>5</strong> explainable gates</span><span><strong>3</strong> fresh challenges</span><span><strong>1×</strong> no-retry execution</span></div></div>
-        <RehearsalForm />
+        <WalletControl placement="home" />
       </section>
       <RecentPassports />
       <section className="process-section"><div className="section-heading"><div><p className="eyebrow">One bounded run</p><h2>Promise → rehearsal → Passport</h2></div><Link className="text-link" href="/docs/quick-verify">Review the verification path →</Link></div><div className="process-grid"><article><span>01</span><h3>Read the contract</h3><p>Fetch the provider-declared public manifest with DNS and redirect protections, then report its signature state.</p></article><article><span>02</span><h3>Try the hard edges</h3><p>Discover the tool, run the sample, reject invalid input, and generate fresh invoices.</p></article><article><span>03</span><h3>Publish when confirmed</h3><p>Record normalized evidence, then attach publication state and a transaction only when the registry confirms it.</p></article></div></section>

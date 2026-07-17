@@ -26,6 +26,11 @@ code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
 nav { display: flex; align-items: center; gap: clamp(14px, 2.6vw, 34px); }
 nav a { font-size: .88rem; font-weight: 700; text-decoration: none; }
 .nav-cta { padding: 10px 15px; background: var(--ink); color: white; border-radius: 10px; }
+.nav-wallet { display: inline-flex; align-items: center; gap: 9px; }
+.nav-wallet span { max-width: 92px; color: var(--gray); font-family: "SFMono-Regular", Consolas, monospace; font-size: .65rem; font-weight: 800; }
+.nav-wallet button { min-height: 40px; padding: 0 14px; border: 1px solid var(--purple); border-radius: 10px; background: var(--purple); color: white; cursor: pointer; font-size: .76rem; font-weight: 850; white-space: nowrap; }
+.nav-wallet button:hover:not(:disabled) { background: var(--purple-dark); }
+.nav-wallet button:disabled { cursor: not-allowed; opacity: .55; }
 
 main { overflow: hidden; }
 .home-hero { min-height: calc(100vh - 76px); display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(360px, .9fr); gap: clamp(44px, 7vw, 100px); align-items: center; padding: clamp(60px, 8vw, 120px) clamp(20px, 6vw, 92px); position: relative; }
@@ -42,6 +47,15 @@ h3 { font-size: 1.35rem; }
 .proof-strip { display: flex; gap: 28px; margin-top: 40px; flex-wrap: wrap; }
 .proof-strip span { display: inline-flex; align-items: baseline; gap: 7px; font-size: .78rem; color: var(--gray); font-weight: 700; }
 .proof-strip strong { color: var(--ink); font-size: 1.25rem; }
+.home-wallet-card { position: relative; z-index: 2; width: min(100%, 520px); justify-self: center; padding: clamp(30px, 5vw, 52px); border: 1px solid var(--line); border-radius: 24px; background: var(--panel); box-shadow: var(--shadow), 9px 9px 0 #ded6ff; text-align: center; }
+.home-wallet-card h2 { margin-bottom: 14px; font-size: clamp(2rem, 4vw, 3.3rem); }
+.home-wallet-card > p:not(.eyebrow):not(.wallet-control-error) { margin: 0 auto 26px; max-width: 410px; color: var(--gray); }
+.home-wallet-button { width: 100%; min-height: 56px; border: 0; border-radius: 12px; background: var(--purple); color: white; box-shadow: 0 7px 0 var(--purple-dark); cursor: pointer; font-weight: 900; }
+.home-wallet-button:hover:not(:disabled) { transform: translateY(-1px); }
+.home-wallet-button:disabled { cursor: not-allowed; opacity: .5; }
+.home-wallet-disconnect { margin: 20px 0 0; border: 0; background: transparent; color: var(--gray); cursor: pointer; font-size: .75rem; font-weight: 800; text-decoration: underline; text-underline-offset: 3px; }
+.home-wallet-card .text-link { display: block; margin-top: 24px; font-size: .82rem; }
+.wallet-control-error { margin: 20px 0 0; padding: 10px 12px; border: 1px solid #f0b6b6; border-radius: 9px; background: #fff0f0; color: var(--red); font-size: .75rem; font-weight: 750; }
 
 .rehearsal-shell { position: relative; z-index: 2; background: var(--panel); border: 1px solid var(--line); border-radius: 22px; box-shadow: var(--shadow), 8px 8px 0 #ded6ff; overflow: hidden; }
 .rehearsal-expanded { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, .65fr); }
@@ -140,6 +154,8 @@ input:focus { border-color: var(--purple); box-shadow: 0 0 0 3px rgba(93,67,214,
 .passport-hero h1 { font-size: clamp(2rem, 4vw, 4rem); margin: 0 0 12px; }
 .passport-hero p:last-child { color: #aaa6af; margin: 0; }
 .passport-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
+.passport-hero .passport-share { border-color: white; background: white; color: var(--ink); }
+.passport-hero .passport-share:hover { border-color: #ded6ff; background: #ded6ff; color: var(--ink); }
 .status { display: inline-flex; align-items: center; gap: 7px; min-height: 33px; padding: 0 11px; border-radius: 100px; font-size: .7rem; font-weight: 900; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
 .status-verified { background: #dff2e8; color: var(--green); }
 .status-needs-attention { background: #ffe2de; color: var(--red); }
@@ -258,6 +274,9 @@ footer > div { display: flex; justify-content: flex-end; gap: 20px; font-size: .
   .site-header { min-height: 66px; }
   nav > a:not(.nav-cta) { display: none; }
   .nav-cta { font-size: .72rem; padding: 9px 11px; }
+  nav { gap: 9px; }
+  .nav-wallet span { display: none; }
+  .nav-wallet button { min-height: 38px; padding-inline: 11px; font-size: .69rem; }
   .home-hero { min-height: 0; padding-top: 60px; }
   h1 { font-size: clamp(3rem, 15vw, 5rem); }
   .rehearsal-expanded, .passport-preview, .two-column, .compare-grid, .fixture-grid, .status-summary, .recent-grid { grid-template-columns: 1fr; }
@@ -283,6 +302,7 @@ footer > div { display: flex; justify-content: flex-end; gap: 20px; font-size: .
   .site-header .brand > span:last-child { display: none; }
   .brand-mark { width: 32px; height: 32px; }
   .nav-cta { max-width: 125px; text-align: center; }
+  .nav-cta { display: none; }
   .proof-strip { gap: 16px; }
   .segmented { grid-template-columns: 1fr; }
   .payment-mode { grid-template-columns: 1fr; }

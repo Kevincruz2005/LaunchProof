@@ -241,6 +241,7 @@ export function rememberConnectedWallet(account: `0x${string}`): void {
     // Storage can be unavailable in locked-down browser contexts. The active
     // in-memory connection still works for the current page in that case.
   }
+  window.dispatchEvent?.(new Event("launchproof:wallet"));
 }
 
 export async function forgetConnectedWallet(): Promise<void> {
@@ -257,6 +258,7 @@ export async function forgetConnectedWallet(): Promise<void> {
     // Revocation is not standardized across every injected EVM wallet. The
     // LaunchProof session is forgotten even when the provider lacks it.
   }
+  window.dispatchEvent?.(new Event("launchproof:wallet"));
 }
 
 export async function restoreConnectedWallet(projectCard: ProjectCard): Promise<`0x${string}` | null> {
@@ -284,7 +286,6 @@ export async function restoreConnectedWallet(projectCard: ProjectCard): Promise<
     }
     const chainId = await provider.request({ method: "eth_chainId" });
     if (typeof chainId !== "string" || Number.parseInt(chainId, 16) !== projectCard.chain.id) return null;
-    rememberConnectedWallet(account);
     return account;
   } catch {
     return null;
@@ -308,13 +309,14 @@ function walletPageSessionContinues(): boolean {
 
 export function subscribeToInjectedWallet(listener: () => void): () => void {
   const provider = getInjectedEvmProvider();
-  if (!provider?.on) return () => undefined;
   const handleChange = () => listener();
-  provider.on("accountsChanged", handleChange);
-  provider.on("chainChanged", handleChange);
+  window.addEventListener?.("launchproof:wallet", handleChange);
+  provider?.on?.("accountsChanged", handleChange);
+  provider?.on?.("chainChanged", handleChange);
   return () => {
-    provider.removeListener?.("accountsChanged", handleChange);
-    provider.removeListener?.("chainChanged", handleChange);
+    window.removeEventListener?.("launchproof:wallet", handleChange);
+    provider?.removeListener?.("accountsChanged", handleChange);
+    provider?.removeListener?.("chainChanged", handleChange);
   };
 }
 
