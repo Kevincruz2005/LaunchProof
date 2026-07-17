@@ -69,6 +69,18 @@ describe("settled LaunchProof payment references", () => {
     expect(reference.timestamp).toBe(blockTimestamp);
   });
 
+  it("accepts OKX exact-settlement responses that encode the optional amount as null", async () => {
+    const reference = await settledPaymentReference(
+      config,
+      settlement({ amount: null } as unknown as Partial<SettleResponse>),
+      requirements(),
+      "/api/rehearsals",
+      async () => blockTimestamp,
+    );
+    expect(reference.amount_atomic).toBe("10000");
+    expect(reference.settlement_transaction).toBe(transaction);
+  });
+
   it("fails closed for a pending result or mismatched policy", async () => {
     await expect(settledPaymentReference(
       config,

@@ -460,7 +460,7 @@ export async function settledPaymentReference(
     requirements.asset.toLowerCase() !== config.chain.usdt0Address.toLowerCase() ||
     requirements.amount !== expectedAmount ||
     requirements.payTo.toLowerCase() !== config.PAYOUT_ADDRESS?.toLowerCase() ||
-    (settlement.amount !== undefined && settlement.amount !== expectedAmount)
+    (settlement.amount != null && settlement.amount !== expectedAmount)
   ) {
     throw new Error("LaunchProof x402 settlement does not match the configured payment policy");
   }
@@ -503,7 +503,7 @@ export function settlementProgress(
     requirements.asset.toLowerCase() !== config.chain.usdt0Address.toLowerCase() ||
     requirements.amount !== expectedAmount ||
     requirements.payTo.toLowerCase() !== config.PAYOUT_ADDRESS?.toLowerCase() ||
-    (settlement.amount !== undefined && settlement.amount !== expectedAmount)) {
+    (settlement.amount != null && settlement.amount !== expectedAmount)) {
     throw new Error("LaunchProof x402 settlement does not match the configured payment policy");
   }
   if (!/^0x[0-9a-fA-F]{64}$/.test(settlement.transaction)) throw new Error("Settlement omitted a transaction hash");
