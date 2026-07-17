@@ -42,6 +42,29 @@ async function main() {
         }) + "\n");
       });
   });
+
+  // X Layer can confirm a valid publication after the request-side receipt wait
+  // expires. Keep reconciling the persisted, signed candidate so a mined
+  // transaction becomes a completed passport without requiring a redeploy.
+  let publicationReconciliationRunning = false;
+  const publicationReconciliationTimer = setInterval(() => {
+    if (publicationReconciliationRunning) return;
+    publicationReconciliationRunning = true;
+    void registry.reconcilePendingPublications(repository)
+      .then((records) => {
+        if (records > 0) process.stdout.write(JSON.stringify({ event: "chain_publications_reconciled", records }) + "\n");
+      })
+      .catch((error: unknown) => {
+        process.stderr.write(JSON.stringify({
+          event: "chain_publication_reconciliation_failed",
+          error_type: error instanceof Error ? error.name : "UnknownError",
+        }) + "\n");
+      })
+      .finally(() => {
+        publicationReconciliationRunning = false;
+      });
+  }, 30_000);
+  publicationReconciliationTimer.unref();
 }
 
 void main().catch((error: unknown) => {

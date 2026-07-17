@@ -191,7 +191,11 @@ function createPaidMiddleware(settings: FixtureConfig): RequestHandler {
             scheme: "exact",
             network: settings.network,
             payTo: settings.paymentRecipient,
-            price: { amount: settings.paymentAmount, asset: settings.assetAddress },
+            price: {
+              amount: settings.paymentAmount,
+              asset: settings.assetAddress,
+              extra: { name: "USD₮0", version: "1" },
+            },
           },
         ],
         description: "LaunchProof controlled paid-delivery fixture",
