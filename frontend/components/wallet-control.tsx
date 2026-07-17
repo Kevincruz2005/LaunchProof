@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
   connectWallet,
@@ -78,6 +77,7 @@ export function WalletControl({ placement }: { placement: "header" | "home" }) {
         <button disabled={busy || !card} onClick={() => void connect()} type="button">
           {busy ? "Opening wallet…" : "Connect wallet"}
         </button>
+        {account ? <button className="nav-wallet-disconnect" disabled={busy} onClick={() => void disconnect()} type="button">Disconnect</button> : null}
       </div>
     );
   }
@@ -92,7 +92,6 @@ export function WalletControl({ placement }: { placement: "header" | "home" }) {
       </button>
       {account ? <button className="home-wallet-disconnect" disabled={busy} onClick={() => void disconnect()} type="button">Disconnect</button> : null}
       {error ? <p className="wallet-control-error" role="alert">{error}</p> : null}
-      <Link className="text-link" href="/rehearse">Continue to rehearse a service →</Link>
     </div>
   );
 }

@@ -31,6 +31,8 @@ nav a { font-size: .88rem; font-weight: 700; text-decoration: none; }
 .nav-wallet button { min-height: 40px; padding: 0 14px; border: 1px solid var(--purple); border-radius: 10px; background: var(--purple); color: white; cursor: pointer; font-size: .76rem; font-weight: 850; white-space: nowrap; }
 .nav-wallet button:hover:not(:disabled) { background: var(--purple-dark); }
 .nav-wallet button:disabled { cursor: not-allowed; opacity: .55; }
+.nav-wallet button.nav-wallet-disconnect { border-color: #c9c3d4; background: transparent; color: var(--ink); }
+.nav-wallet button.nav-wallet-disconnect:hover:not(:disabled) { background: #f0edf7; }
 
 main { overflow: hidden; }
 .home-hero { min-height: calc(100vh - 76px); display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(360px, .9fr); gap: clamp(44px, 7vw, 100px); align-items: center; padding: clamp(60px, 8vw, 120px) clamp(20px, 6vw, 92px); position: relative; }
@@ -54,7 +56,6 @@ h3 { font-size: 1.35rem; }
 .home-wallet-button:hover:not(:disabled) { transform: translateY(-1px); }
 .home-wallet-button:disabled { cursor: not-allowed; opacity: .5; }
 .home-wallet-disconnect { margin: 20px 0 0; border: 0; background: transparent; color: var(--gray); cursor: pointer; font-size: .75rem; font-weight: 800; text-decoration: underline; text-underline-offset: 3px; }
-.home-wallet-card .text-link { display: block; margin-top: 24px; font-size: .82rem; }
 .wallet-control-error { margin: 20px 0 0; padding: 10px 12px; border: 1px solid #f0b6b6; border-radius: 9px; background: #fff0f0; color: var(--red); font-size: .75rem; font-weight: 750; }
 
 .rehearsal-shell { position: relative; z-index: 2; background: var(--panel); border: 1px solid var(--line); border-radius: 22px; box-shadow: var(--shadow), 8px 8px 0 #ded6ff; overflow: hidden; }
@@ -86,12 +87,6 @@ input:focus { border-color: var(--purple); box-shadow: 0 0 0 3px rgba(93,67,214,
 .secondary { border: 1px solid #c9c3d4; background: transparent; color: var(--ink); font-size: .78rem; }
 .secondary:hover { background: #f0edf7; }
 .local-note { font-size: .7rem; color: #7a4d18; margin: 17px 0 0; }
-.wallet-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 3px 0 16px; padding: 13px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-.wallet-row small, .wallet-row strong { display: block; }
-.wallet-row small { color: var(--gray); font-size: .62rem; font-weight: 850; text-transform: uppercase; letter-spacing: .06em; }
-.wallet-row strong { margin-top: 3px; font-family: "SFMono-Regular", Consolas, monospace; font-size: .72rem; }
-.wallet-row .secondary { flex: 0 0 auto; }
-.wallet-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .run-policy { margin: 0 0 16px; color: var(--gray); font-size: .65rem; overflow-wrap: anywhere; }
 .saved-run-note { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; padding: 10px 12px; border: 1px solid #cfc6f0; border-radius: 9px; background: #f3f0ff; color: #4b3a86; font-size: .66rem; font-weight: 700; }
 .saved-run-note button { flex: 0 0 auto; border: 0; background: transparent; color: var(--purple); cursor: pointer; font-weight: 850; text-decoration: underline; text-underline-offset: 3px; }
@@ -306,7 +301,6 @@ footer > div { display: flex; justify-content: flex-end; gap: 20px; font-size: .
   .proof-strip { gap: 16px; }
   .segmented { grid-template-columns: 1fr; }
   .payment-mode { grid-template-columns: 1fr; }
-  .wallet-row { align-items: stretch; flex-direction: column; }
   .payment-row { align-items: stretch; flex-direction: column; }
   .gate-grid { grid-template-columns: 1fr; }
   .evidence-grid { grid-template-columns: 1fr; }
