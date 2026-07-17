@@ -286,7 +286,17 @@ export class RegistryService {
       const decoded = decodeEventLog({ abi: registryAbi, data: log.data, topics: log.topics, strict: true });
       const runId = (decoded.args as unknown as PublishedArgs).runId;
       const loaded = await this.load(runId, client);
-      if (!loaded?.match) throw new Error(`Refusing to index chain record ${runId}: verification failed`);
+      if (!loaded?.match) {
+        // A malformed or historically incompatible record must never poison the
+        // entire public index. Quarantine it and continue indexing independently
+        // verifiable records; readPublishedRun still fails closed for this run.
+        process.stderr.write(JSON.stringify({
+          event: "chain_record_quarantined",
+          run_id: runId,
+          reason: "verification_failed",
+        }) + "\n");
+        continue;
+      }
       const existing = await repository.getRun(runId);
       const record = existing
         ? { ...loaded.record, idempotency_key: existing.idempotency_key }
