@@ -16,7 +16,7 @@ The official OKX documentation lists X Layer testnet and test USD₮0 support in
 
 ## Start here
 
-Read the [complete project and implementation guide](./docs/PROJECT_IMPLEMENTATION.md) for the architecture, trust model, payment/evidence design, recovery behavior, verification model, test results, and current deployment readiness. Follow [setup.md](./setup.md) from a clean clone for the command-by-command operator runbook. It covers fresh key generation, testnet funding, registry deployment, read-only deployment verification, four explicitly configured fixtures, x402 setup, PostgreSQL, application startup, and end-to-end verification.
+Read the [complete project and implementation guide](./docs/PROJECT_IMPLEMENTATION.md) for the architecture, trust model, payment/evidence design, recovery behavior, verification model, test results, and live deployment proof. Follow [setup.md](./setup.md) from a clean clone for the command-by-command operator runbook. The [demo speaking script](./docs/DEMO_SCRIPT.md) gives a concise presentation flow and the final verified testnet hashes.
 
 ```bash
 git clone https://github.com/Kevincruz2005/LaunchProof.git

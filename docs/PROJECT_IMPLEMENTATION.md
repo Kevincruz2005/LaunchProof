@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-07-17
 
-This document explains what LaunchProof is, how every major part is implemented, what is genuinely on chain, how to reproduce and operate it on X Layer testnet, and the exact state of deployment readiness. The command-by-command operator runbook is [`setup.md`](../setup.md); this file is the architectural and implementation handoff.
+This document explains what LaunchProof is, how every major part is implemented, what is genuinely on chain, how to reproduce and operate it on X Layer testnet, and the exact state of deployment readiness. The command-by-command operator runbook is [`setup.md`](../setup.md); this file is the architectural and implementation handoff. The ready-to-read presentation is [`DEMO_SCRIPT.md`](./DEMO_SCRIPT.md).
 
 ## 1. Executive summary
 
@@ -31,37 +31,53 @@ Chain ID `195` is not used. Configuration, backend startup, deployment, fixture 
 
 ## 2. Current readiness and deployment truth
 
-The application, schemas, fixtures, payment safety logic, registry contract, recovery paths, deployment recorders, and documentation are implemented and locally verified. A new registry must be deployed because the registry writer previously supplied to the project was exposed and the contract invariants changed.
+LaunchProof is live on X Layer testnet. The public web client is on Vercel, the persistent API and four fixture services are on Railway, durable state is in Supabase PostgreSQL, and the registry is deployed on X Layer testnet. The runtime release used for the final paid acceptance run is the real Git commit `5fa2c80b3b2370724616ae3d0abc50865a8281af`; that object exists in this repository and the API plus every fixture reported that exact full SHA.
 
-Fresh role-separated testnet identities were generated into ignored mode-`0600` files. Only their public addresses are listed here:
+### 2.1 Live services
 
-| Role | Public address | Current test OKB at review time |
-|---|---|---:|
-| Deployer | `0xFfa92d000831E6E173c1757572862Cf43f2036a5` | `0` |
-| Registry writer | `0x69d805Fe2c206fe0A5bd77C5e6191Ce74Fc17692` | `0` |
-| Target payer | `0x64Eb80cba55927de8c613A95921bd6b5085bF18B` | `0` |
-| Payment payout | `0x8A3d59DDB0E3cafCb2E1ddb8391EB903aafB94Dd` | not required for gas |
-| Healthy fixture provider | `0x72533424FbC2a174a5745e0c440994997F1CD6d1` | not required |
-| Invalid-output provider | `0x5dC4906FeF25939369B2849D734847C7A3Ec722f` | not required |
-| Schema-drift provider | `0x08254c2980C69e32B713857eB893b847aB5A5CC8` | not required |
-| Timeout provider | `0x8602b75409Ec40d5732C857c02A5Ee69f1938279` | not required |
+| Service | Public URL |
+|---|---|
+| Web application | `https://launchproof-xlayer-testnet.vercel.app` |
+| API | `https://launchproof-api-production.up.railway.app` |
+| Healthy paid fixture | `https://launchproof-fixture-healthy-production.up.railway.app` |
+| Invalid-output fixture | `https://launchproof-fixture-invalid-production.up.railway.app` |
+| Schema-drift fixture | `https://launchproof-fixture-schema-production.up.railway.app` |
+| Timeout fixture | `https://launchproof-fixture-timeout-production.up.railway.app` |
 
-The live read-only RPC check returned chain ID `1952`, confirmed bytecode at the official test USD₮0 address, and returned zero native balances for deployer, writer, and target payer. Therefore there is intentionally no claimed registry address, deployment transaction, deployment block, runtime bytecode hash, paid rehearsal, or publication transaction yet.
+The API health check reports x402 startup preflight ready, registry reachable, and database reachable. Production disables both local escape hatches. `X402_ENABLED=true`, the only supported network is `eip155:1952`, and the official test USD₮0 asset is used end to end.
 
-The former registry `0x222c757aE27e84480588DECB57929AC8be0f4bC4` is deprecated and untrusted for this release. Its historical records remain on chain, but its exposed writer and older four-gate status rules make it ineligible for LaunchProof verification. It is never used as a fallback.
+### 2.2 Real registry deployment
 
-The browser/demo payer is the user-controlled X Layer testnet account `0x995d174c8b0c4f70817eaa59adb8a3e20faf659c` (`XKO995d174c8b0c4f70817eaa59adb8a3e20faf659c`). Its private key is neither required nor stored by the application; the browser wallet approves its own test-token authorization.
+| Fact | Observed value |
+|---|---|
+| Registry | `0x99313b45b234e06eba1fc8fe7bee101b7f2f2c37` |
+| Deployment transaction | `0x34e8745cfa66425967e113892109d9845f874f311b5999b1bd718368696754ee` |
+| Deployment block | `35805522` |
+| Runtime code hash | `0xe367ae4a310bf429601d9cc43d4191e7d2c9e90056d3183918ba7cc8ac872553` |
+| Deployer | `0xFfa92d000831E6E173c1757572862Cf43f2036a5` |
+| Immutable writer | `0x69d805Fe2c206fe0A5bd77C5e6191Ce74Fc17692` |
 
-The remaining launch gates are external, not unfinished application code:
+The former registry `0x222c757aE27e84480588DECB57929AC8be0f4bC4` remains deprecated and is never used as a fallback.
 
-1. Commit the reviewed working tree so `BUILD_COMMIT_SHA` identifies the exact source.
-2. Rotate the OKX credentials that were previously shared and enter fresh test-capable credentials only in ignored `.env`.
-3. Fund the fresh deployer and writer with test OKB; fund the target payer with the required test assets.
-4. Deploy the four fixtures behind four real HTTPS origins.
-5. Broadcast the new registry deployment and record its observed transaction/address/block/runtime hash.
-6. Execute the browser x402 payment, target x402 payment, and evidence publication.
+### 2.3 Final paid acceptance proof
 
-No code or documentation substitutes placeholder values for any of those facts.
+On 2026-07-17 the exact release above completed a real paid rehearsal:
+
+| Fact | Value |
+|---|---|
+| Run ID | `0xfc904b9b51ec8f9036abe8bcf0b67bd4ab655468b0c4c04415cdc91b24b175ef` |
+| Passport | `verified` |
+| Fresh challenges | `3/3` passed |
+| LaunchProof payment | `0x3e11981acb2fc233622c79f8e2009b175f5a26d18a611965b3c154efc5eda252` |
+| Target paid-delivery payment | `0x2f30444a8d5f9b24fa3b81cd189ab3d388a73e617e99df340eabeadd13f9d9a2` |
+| Evidence publication | `0x150e7d59ffa00c0d2888d60f830fb6d4aa852948953fb6463aa5173e2ff63d82` |
+| Publication block | `35817253` |
+
+Both payments transferred `10000` atomic units (`0.01` test USD₮0) on `eip155:1952`. All five gates passed. `/verify/:runId` returned `true` for the canonical JCS, every evidence hash, provider signature, gate/status mapping, storage/event linkage, evidence semantics, both ERC-20 transfers, registry runtime, cache equality, and the final aggregate `match`.
+
+The browser/demo payer is the user-controlled X Layer testnet account `0x995d174c8b0c4f70817eaa59adb8a3e20faf659c`. Its private key is neither required nor stored by LaunchProof. The automated release acceptance uses the separate backend testnet payer so the complete flow can be reproduced without accessing a user's wallet profile.
+
+No transaction/address/block/runtime value above is fabricated or inferred from a placeholder. Each came from the deployed service response, transaction receipt, committed broadcast record, or live RPC verification.
 
 ## 3. System architecture
 
@@ -186,6 +202,8 @@ The application enforces one backend replica because target-payment budget seria
 
 Before signing, the frontend checks the challenge's chain, official USD₮0 contract, decimals, amount, recipient, and route. It persists the idempotency key/run binding in local storage and polls the same run after refresh or retry. Public environment variables contain only public anchors.
 
+OKX Wallet is detected through its dedicated injected provider before falling back to a generic EVM provider. Wallet controls are the first row in the rehearsal form. **Change wallet** requests a fresh account permission (with a safe fallback for wallets that do not implement the permission methods), and **Disconnect** clears LaunchProof's session and requests account-permission revocation. The selected account is stored only in tab `sessionStorage`: a reload in the same open tab can restore it without an unsolicited prompt, while a fresh navigation/newly opened app session clears it even in browsers that restore closed-tab session storage. The application never stores a wallet private key.
+
 ## 9. Crash safety and idempotency
 
 The paid state machine is:
@@ -282,6 +300,8 @@ The browser also performs direct RPC verification using the bundled ABI. `script
 - `Fixture` and `CampaignLog`: explicit operational metadata.
 
 Advisory transaction locks serialize inbound capacity/payment authorization and publication updates. Startup rebuilds the cache from verified chain logs with a 12-block overlap. PostgreSQL can accelerate or recover the service but cannot make a chain verification pass.
+
+The live deployment uses Supabase-hosted PostgreSQL through its production pooler. Railway runs Prisma migrations before starting the API. Supabase is the durable queue/cache and recovery store; it is not the evidence authority. Deleting the cache does not delete the registry events, and a database row alone cannot make `/verify` return `match=true`.
 
 ## 14. HTTP, MCP, and frontend surfaces
 
@@ -389,6 +409,36 @@ curl -fsS "http://localhost:4000/verify/$RUN_ID" | jq .
 
 A genuine verified run shows three real transaction references: the inbound LaunchProof transfer, outbound protected-delivery transfer, and registry publication.
 
+### 17.3 Live hosting model
+
+The deployed system is intentionally split by workload:
+
+- **Vercel** builds and hosts only the Next.js frontend. Browser variables are public API/RPC/registry anchors prefixed with `NEXT_PUBLIC_`; no wallet, facilitator, database, writer, or payer secret is present in the frontend build.
+- **Railway** runs one persistent Express/worker API container and four separate fixture containers. A persistent process is required for bounded background work, late receipt reconciliation, startup recovery, and single-replica payment serialization.
+- **Supabase** provides managed PostgreSQL. Railway receives the pooled production `DATABASE_URL`; Prisma migrations run before API startup.
+- **X Layer testnet** is the evidence and payment network. The API refuses to start if RPC chain ID, registry bytecode/runtime hash, token profile, writer configuration, or production safety settings do not match.
+- **OKX x402** provides the official facilitator path. A 402 challenge is expected protocol behavior; the paid retry and final receipt are the success conditions.
+
+Vercel can be deployed from its CLI after the project is linked:
+
+```bash
+vercel pull --yes --environment=production
+vercel build --prod
+vercel deploy --prebuilt --prod
+```
+
+Railway can likewise deploy from the repository root with each service's Dockerfile already selected in its service settings:
+
+```bash
+railway up --service launchproof-api --environment production --detach
+railway up --service launchproof-fixture-healthy --environment production --detach
+railway up --service launchproof-fixture-invalid --environment production --detach
+railway up --service launchproof-fixture-schema --environment production --detach
+railway up --service launchproof-fixture-timeout --environment production --detach
+```
+
+The API `BUILD_COMMIT_SHA` and every fixture `SOURCE_REVISION` must be the exact output of `git rev-parse HEAD`, not a shortened or manually expanded hash. LaunchProof deliberately rejects a trusted fixture if those values differ. Secrets must be entered in the hosting dashboards/CLI secret stores and never copied into Vercel public variables or committed files.
+
 ## 18. Local development mode
 
 Local fixtures can run on `127.0.0.1:4101` through `:4104` with explicit developer flags:
@@ -407,12 +457,12 @@ Local mode is useful for UI and rehearsal development. It produces `execution_mo
 
 ## 19. Verification completed for this implementation
 
-The following checks passed on the reviewed working tree:
+The following checks passed on the release code and live deployment:
 
 | Check | Result |
 |---|---|
-| Backend Vitest | 12 files, 74 tests passed |
-| Frontend Vitest | 1 file, 3 tests passed |
+| Backend Vitest | 12 files, 81 tests passed |
+| Frontend Vitest | 1 file, 7 tests passed |
 | Fixture runtime Vitest | 1 file, 7 tests passed |
 | Solidity Foundry | 9 tests passed, 0 failed |
 | Backend TypeScript | passed |
@@ -420,7 +470,7 @@ The following checks passed on the reviewed working tree:
 | Fixture runtime TypeScript | passed |
 | Backend production build | passed |
 | Fixture runtime build | passed |
-| Next.js production build | passed; 9 routes generated/compiled |
+| Next.js production build | passed; all production routes generated/compiled |
 | Solidity compile/ABI refresh | passed; creation bytecode `3184` bytes |
 | `forge fmt --check` | passed |
 | JSON syntax and shell/Node script syntax | passed |
@@ -428,9 +478,13 @@ The following checks passed on the reviewed working tree:
 | `git diff --check` | passed |
 | pnpm frozen lockfile, offline | up to date with pnpm `10.13.1` |
 | Prisma client generation | passed |
-| Live RPC identity | chain `1952`; official test USD₮0 code present |
+| Live API health | x402 preflight, registry, and Supabase PostgreSQL reachable |
+| Live service provenance | API and all four fixtures reported exact Git SHA `5fa2c80b3b2370724616ae3d0abc50865a8281af` |
+| Paid end-to-end rehearsal | `verified`; five gates passed; three fresh challenges passed |
+| Independent server verification | every individual flag and aggregate `match` returned `true` |
+| Live RPC identity | chain `1952`; official test USD₮0 and registry bytecode present |
 
-Docker is not installed in the review host, so `docker compose config` and a live PostgreSQL migration/container smoke test were not run there. Prisma generation, repository tests, committed migrations, and all TypeScript/build checks passed. The public end-to-end transaction test is pending the external funding/credential/HTTPS gates described in section 2.
+The live database path was exercised through Supabase, including Prisma migrations, durable payment/run writes, restart recovery, and chain-index reconciliation. The final verified run and its three transaction hashes are listed in section 2.3.
 
 ## 20. Operational checklist
 
@@ -451,6 +505,15 @@ Before every public demo or release:
 - explorer links resolve to the real settlement/publication transactions.
 
 Monitor ambiguous payments/publications rather than manually retrying them. Rotate a compromised immutable writer by deploying a new registry. Never edit deployment metadata to make validation pass.
+
+### Common live-demo observations
+
+- One `POST /api/rehearsals -> 402` is expected: it carries the x402 payment requirements. The wallet-signed retry should return `202`. Repeated unresolved 402 responses mean the paid header, challenge parsing, facilitator, or CORS path failed.
+- A `202` from `/runs/:runId` means the durable run is still executing. X Layer/facilitator settlement and two-confirmation publication can take tens of seconds. Keep polling the same run; do not create a new idempotency key.
+- **Change wallet** may open an OKX account-selection/permission flow. **Disconnect** clears LaunchProof immediately, although permission revocation itself is wallet-dependent.
+- A clean browser session has no injected wallet in automated headless testing. That is correct: the public UI must show **Connect wallet**, while real signing remains a user-approved OKX Wallet action.
+- If API and fixture source revisions differ during a rolling deploy, the fixture is marked not rehearsable. Finish deploying the exact same full Git SHA to all services before paying for the acceptance run.
+- A late-but-successful registry receipt is reconciled from the persisted signed candidate every 30 seconds. It does not require a second publication transaction.
 
 ## 21. Scope and limitations
 
