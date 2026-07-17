@@ -3,7 +3,7 @@ import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from "no
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 
-const transactionHash = process.argv[2];
+const transactionHash = process.argv.slice(2).find((argument) => argument !== "--");
 if (!/^0x[0-9a-fA-F]{64}$/.test(transactionHash ?? "")) {
   throw new Error("usage: node scripts/record-testnet-deployment.mjs DEPLOYMENT_TX_HASH");
 }

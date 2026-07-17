@@ -89,8 +89,8 @@ Object.assign(childEnv, {
 process.stdout.write(`Broadcasting the locally built registry to eip155:1952 with writer ${config.REGISTRY_WRITER_ADDRESS}. No secret is printed.\n`);
 const result = spawnSync(
   "forge",
-  ["script", "--root", "contracts", "script/Deploy.s.sol:Deploy", "--rpc-url", rpcUrl.toString(), "--broadcast"],
-  { cwd: root, env: childEnv, stdio: "inherit" },
+  ["script", "script/Deploy.s.sol:Deploy", "--rpc-url", rpcUrl.toString(), "--broadcast"],
+  { cwd: resolve(root, "contracts"), env: childEnv, stdio: "inherit" },
 );
 if (result.error) throw result.error;
 if (result.status !== 0) process.exit(result.status ?? 1);
