@@ -4,6 +4,7 @@ import { loadConfig } from "../src/config.js";
 import { MemoryRepository } from "../src/db/store.js";
 import { rehearsalTargetSchemaFor, requireBoundIdempotencyKey, settledPaymentReference, settlementProgress } from "../src/payments/inbound.js";
 import { RehearsalService } from "../src/workers/rehearsal.js";
+import { normalizeTargetPaymentRequest } from "../src/payments/target.js";
 
 const payout = `0x${"34".repeat(20)}` as const;
 const transaction = `0x${"ab".repeat(32)}` as const;
@@ -151,5 +152,21 @@ describe("settled LaunchProof payment references", () => {
     const reset = await repository.getRun(run.run_id);
     expect(reset?.state).toBe("payment_settled");
     expect(reset && !("canonical_evidence" in reset) ? reset.target_payment_attempt : undefined).toBeNull();
+  });
+
+  it("preserves headers and body when the x402 retry arrives as a Request object", async () => {
+    const normalized = await normalizeTargetPaymentRequest(new Request("https://fixture.example/paid", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "payment-signature": "signed-target-payload",
+        "access-control-expose-headers": "PAYMENT-RESPONSE",
+      },
+      body: JSON.stringify({ run_id: "test-run" }),
+    }));
+    expect(normalized.method).toBe("POST");
+    expect(normalized.headers.get("payment-signature")).toBe("signed-target-payload");
+    expect(normalized.headers.has("access-control-expose-headers")).toBe(false);
+    expect(normalized.body).toBe(JSON.stringify({ run_id: "test-run" }));
   });
 });

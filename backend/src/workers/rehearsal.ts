@@ -30,7 +30,7 @@ import {
   RegistryService,
   type EvidenceHashes,
 } from "../chain/registry.js";
-import { TargetPaymentService } from "../payments/target.js";
+import { failedDeliveryEvidence, TargetPaymentService } from "../payments/target.js";
 import {
   sanitizeEvidenceText,
   sanitizeEvidenceValue,
@@ -539,7 +539,17 @@ export class RehearsalService {
           paidDeliveryEvidence = paidDelivery.evidence;
           latencies.push(paidDelivery.evidence.latency_ms);
           gates.paid_delivery = paidDelivery.deliveryMatches ? "pass" : "fail";
-        } catch {
+        } catch (error) {
+          const progress = await this.repository.getRun(runId);
+          if (progress && !("canonical_evidence" in progress) && progress.target_payment_attempt) {
+            // A signed EIP-3009 authorization may already have reached the
+            // facilitator. Keep the durable attempt recoverable and do not
+            // overwrite it with a finalized Passport.
+            throw error;
+          }
+          const failureEvidence = failedDeliveryEvidence(runId, manifest, safeError(error));
+          paidDeliveryEvidence = failureEvidence;
+          latencies.push(failureEvidence.latency_ms);
           gates.paid_delivery = "fail";
         }
       }

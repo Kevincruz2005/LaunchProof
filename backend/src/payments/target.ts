@@ -95,9 +95,8 @@ export class TargetPaymentService {
 
     const startBlock = await publicClient.getBlockNumber();
     const boundedFetch: typeof fetch = async (input, init) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      const body = typeof init?.body === "string" ? init.body : undefined;
-      const headers = new Headers(init?.headers);
+      const normalized = await normalizeTargetPaymentRequest(input, init);
+      const { url, body, headers } = normalized;
       if (headers.has("payment-signature")) {
         const rpcChainId = await publicClient.getChainId();
         if (rpcChainId !== 1952 || rpcChainId !== this.config.chain.id) {
@@ -105,7 +104,7 @@ export class TargetPaymentService {
         }
       }
       const result = await safeRequest(url, this.config, {
-        method: (init?.method?.toUpperCase() === "GET" ? "GET" : "POST"),
+        method: normalized.method,
         headers: headerRecord(headers),
         body,
         timeoutMs: manifest.max_latency_ms,
@@ -241,6 +240,18 @@ export class TargetPaymentService {
   }
 }
 
+export async function normalizeTargetPaymentRequest(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<{ url: string; method: "GET" | "POST"; headers: Headers; body?: string }> {
+  const request = new Request(input, init);
+  const method = request.method.toUpperCase() === "GET" ? "GET" : "POST";
+  const headers = new Headers(request.headers);
+  headers.delete("access-control-expose-headers");
+  const body = method === "POST" && request.body ? await request.clone().text() : undefined;
+  return { url: request.url, method, headers, ...(body !== undefined ? { body } : {}) };
+}
+
 function readEip3009Authorization(paymentPayload: PaymentPayload): {
   from: string;
   to: string;
@@ -283,7 +294,7 @@ function deliveryComparison(field: string, expected: string, actual: string | nu
   };
 }
 
-function failedDeliveryEvidence(
+export function failedDeliveryEvidence(
   runId: string,
   manifest: LaunchContract,
   message: string,
