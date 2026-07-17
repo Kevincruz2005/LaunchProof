@@ -8,7 +8,10 @@ import {
   getProjectCard,
   loadPendingRun,
   pollRun,
+  rememberConnectedWallet,
+  restoreConnectedWallet,
   savePendingRun,
+  subscribeToInjectedWallet,
   submitRun,
   testnetPaymentAnchorError,
   type PaymentMode,
@@ -80,6 +83,8 @@ export function RehearsalForm({ expanded = false }: { expanded?: boolean }) {
       const card = await getProjectCard();
       if (cancelled) return;
       setProjectCard(card);
+      setAccount(await restoreConnectedWallet(card));
+      if (cancelled) return;
       const pending = loadPendingRun();
       if (pending) {
         setSavedAttempt(pending);
@@ -109,6 +114,21 @@ export function RehearsalForm({ expanded = false }: { expanded?: boolean }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
+  useEffect(() => {
+    if (!projectCard) return;
+    let cancelled = false;
+    const syncWallet = () => {
+      void restoreConnectedWallet(projectCard).then((restored) => {
+        if (!cancelled) setAccount(restored);
+      });
+    };
+    const unsubscribe = subscribeToInjectedWallet(syncWallet);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [projectCard]);
+
   async function trackRun(runId: string) {
     setState("run_in_progress");
     try {
@@ -131,7 +151,9 @@ export function RehearsalForm({ expanded = false }: { expanded?: boolean }) {
     setError(null);
     setState("connecting_wallet");
     try {
-      setAccount(await connectWallet(projectCard));
+      const connectedAccount = await connectWallet(projectCard);
+      rememberConnectedWallet(connectedAccount);
+      setAccount(connectedAccount);
       setState("idle");
     } catch (cause) {
       setState("failed");
@@ -207,6 +229,13 @@ export function RehearsalForm({ expanded = false }: { expanded?: boolean }) {
   return (
     <section className={`rehearsal-shell ${expanded ? "rehearsal-expanded" : ""}`}>
       <form onSubmit={submit} className="rehearsal-form">
+        {paymentMode === "paid" ? (
+          <div className="wallet-row">
+            <div><small>Wallet · this tab</small><strong>{account ? shortAddress(account) : "Not connected"}</strong></div>
+            <button className="secondary" disabled={busy || !paidReady} type="button" onClick={() => void connect()}>{account ? "Change wallet" : "Connect wallet"}</button>
+          </div>
+        ) : <p className="local-note">Local mode is development-only. Its Passport and receipt must remain marked unpaid/local.</p>}
+
         <div className="segmented" role="group" aria-label="Passport mode">
           <button className={runKind === "first" ? "active" : ""} disabled={busy} type="button" onClick={() => setRunKind("first")}>First version{projectCard ? ` · ${projectCard.payments.genesis_amount}` : ""}</button>
           <button className={runKind === "renew" ? "active" : ""} disabled={busy} type="button" onClick={() => setRunKind("renew")}>Renew{projectCard ? ` · ${projectCard.payments.renewal_amount}` : ""}</button>
@@ -238,13 +267,6 @@ export function RehearsalForm({ expanded = false }: { expanded?: boolean }) {
 
         <label>Provider domain or Launch Contract URL<input type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://provider.example" required /></label>
         {runKind === "renew" ? <label>Previous run ID<input value={previousRunId} onChange={(event) => setPreviousRunId(event.target.value)} placeholder="0x…" required /></label> : null}
-
-        {paymentMode === "paid" ? (
-          <div className="wallet-row">
-            <div><small>Wallet</small><strong>{account ? shortAddress(account) : "Not connected"}</strong></div>
-            <button className="secondary" disabled={busy || !paidReady} type="button" onClick={() => void connect()}>{account ? "Change wallet" : "Connect wallet"}</button>
-          </div>
-        ) : <p className="local-note">Local mode is development-only. Its Passport and receipt must remain marked unpaid/local.</p>}
 
         {projectCard ? <p className="run-policy">Expected payment policy: <code>exact</code> · <code>{projectCard.chain.network}</code> · {atomicPrice} atomic units ({projectCard.payments.asset.decimals} decimals) · asset <code>{shortAddress(projectCard.payments.asset.address)}</code> · recipient <code>{projectCard.payments.pay_to ? shortAddress(projectCard.payments.pay_to) : "not configured"}</code></p> : null}
         <button className="primary" type="submit" disabled={!canSubmit || busy}>

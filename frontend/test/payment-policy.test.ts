@@ -1,7 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   assertTestnetPaymentAnchors,
   filterExactPaymentRequirements,
+  rememberConnectedWallet,
+  restoreConnectedWallet,
   type ProjectCard,
 } from "../lib/generated-api/client.js";
 
@@ -52,6 +54,7 @@ describe("frontend testnet payment policy", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     delete process.env.NEXT_PUBLIC_PAYOUT_ADDRESS;
     delete process.env.NEXT_PUBLIC_CHAIN_ID;
     delete process.env.NEXT_PUBLIC_XLAYER_RPC_URL;
@@ -88,5 +91,29 @@ describe("frontend testnet payment policy", () => {
       [{ ...exact, amount: "10001" }],
       exact,
     )).toThrow(/did not exactly match/);
+  });
+
+  it("silently restores an authorized wallet only from tab session storage", async () => {
+    const stored = new Map<string, string>();
+    const account = `0x${"55".repeat(20)}` as `0x${string}`;
+    const request = vi.fn(async ({ method }: { method: string }) => {
+      if (method === "eth_accounts") return [account];
+      if (method === "eth_chainId") return "0x7a0";
+      throw new Error(`Unexpected method ${method}`);
+    });
+    vi.stubGlobal("window", {
+      okxwallet: { request },
+      sessionStorage: {
+        getItem: (key: string) => stored.get(key) ?? null,
+        setItem: (key: string, value: string) => stored.set(key, value),
+        removeItem: (key: string) => stored.delete(key),
+      },
+    });
+
+    expect(await restoreConnectedWallet(projectCard())).toBeNull();
+    expect(request).not.toHaveBeenCalled();
+    rememberConnectedWallet(account);
+    expect(await restoreConnectedWallet(projectCard())).toBe(account);
+    expect(request.mock.calls.map(([input]) => input.method)).toEqual(["eth_accounts", "eth_chainId"]);
   });
 });

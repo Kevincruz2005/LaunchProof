@@ -47,7 +47,10 @@ export function createApp(
     },
     methods: ["GET", "POST"],
     allowedHeaders: ["content-type", "payment", "payment-signature", "x-payment", "x-launchproof-local-run", "idempotency-key"],
-    exposedHeaders: ["payment-response", "location"],
+    // x402-fetch reads the initial challenge from PAYMENT-REQUIRED in browser
+    // JavaScript. CORS hides non-safelisted response headers unless the API
+    // explicitly exposes them.
+    exposedHeaders: ["payment-required", "payment-response", "location"],
   }));
   app.use((_request, response, next) => {
     const requestId = randomUUID();

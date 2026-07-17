@@ -30,6 +30,16 @@ describe("public and paid routes", () => {
     expect(response.body.local_only).toBe(true);
   });
 
+  it("exposes the x402 challenge header to the browser", async () => {
+    const response = await request(app)
+      .post("/api/rehearsals")
+      .set("Origin", "http://localhost:3000")
+      .send({ url: "https://example.com", idempotency_key: "browser-cors-test" });
+    expect(response.status).toBe(402);
+    expect(response.headers["access-control-allow-origin"]).toBe("http://localhost:3000");
+    expect(response.headers["access-control-expose-headers"]?.toLowerCase().split(",")).toContain("payment-required");
+  });
+
   it("publishes the exact no-SLA disclaimer", async () => {
     const response = await request(app).get("/status");
     expect(response.body.disclaimer).toContain("It is not an uptime guarantee or a service-level agreement");

@@ -153,7 +153,11 @@ declare global {
 
 interface InjectedEvmProvider {
   request(args: { method: string; params?: unknown[] | object }): Promise<unknown>;
+  on?(event: "accountsChanged" | "chainChanged", listener: (value: unknown) => void): void;
+  removeListener?(event: "accountsChanged" | "chainChanged", listener: (value: unknown) => void): void;
 }
+
+const CONNECTED_WALLET_SESSION_KEY = "launchproof.connected-wallet.v1";
 
 function getInjectedEvmProvider(): InjectedEvmProvider | undefined {
   if (typeof window === "undefined") return undefined;
@@ -194,6 +198,61 @@ export async function connectWallet(projectCard: ProjectCard): Promise<`0x${stri
     if (selectedChainId !== chain.id) throw new Error(`Wallet network mismatch: expected chain ${chain.id}.`);
   }
   return account;
+}
+
+export function rememberConnectedWallet(account: `0x${string}`): void {
+  if (typeof window === "undefined") return;
+  try {
+    // sessionStorage intentionally survives reloads but is discarded when the
+    // browser tab closes. We never persist an account permission ourselves.
+    window.sessionStorage.setItem(CONNECTED_WALLET_SESSION_KEY, account);
+  } catch {
+    // Storage can be unavailable in locked-down browser contexts. The active
+    // in-memory connection still works for the current page in that case.
+  }
+}
+
+export async function restoreConnectedWallet(projectCard: ProjectCard): Promise<`0x${string}` | null> {
+  if (typeof window === "undefined") return null;
+  let priorConnection: string | null;
+  try {
+    priorConnection = window.sessionStorage.getItem(CONNECTED_WALLET_SESSION_KEY);
+  } catch {
+    return null;
+  }
+  if (!priorConnection) return null;
+
+  assertTestnetPaymentAnchors(projectCard);
+  const provider = getInjectedEvmProvider();
+  if (!provider) return null;
+  try {
+    // eth_accounts is silent: it only returns accounts the user has already
+    // authorized, so reload never opens an unsolicited wallet prompt.
+    const accounts = await provider.request({ method: "eth_accounts" });
+    const account = Array.isArray(accounts) && typeof accounts[0] === "string" ? accounts[0] : null;
+    if (!account || !isAddress(account)) {
+      window.sessionStorage.removeItem(CONNECTED_WALLET_SESSION_KEY);
+      return null;
+    }
+    const chainId = await provider.request({ method: "eth_chainId" });
+    if (typeof chainId !== "string" || Number.parseInt(chainId, 16) !== projectCard.chain.id) return null;
+    rememberConnectedWallet(account);
+    return account;
+  } catch {
+    return null;
+  }
+}
+
+export function subscribeToInjectedWallet(listener: () => void): () => void {
+  const provider = getInjectedEvmProvider();
+  if (!provider?.on) return () => undefined;
+  const handleChange = () => listener();
+  provider.on("accountsChanged", handleChange);
+  provider.on("chainChanged", handleChange);
+  return () => {
+    provider.removeListener?.("accountsChanged", handleChange);
+    provider.removeListener?.("chainChanged", handleChange);
+  };
 }
 
 export async function submitRun(input: {
