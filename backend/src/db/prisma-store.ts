@@ -20,7 +20,7 @@ export class PrismaRepository implements Repository {
 
   async createProgress(progress: RunProgress): Promise<StoredRun> {
     return this.client.$transaction(async (transaction) => {
-      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952002)`;
+      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952002)::text AS lock_result`;
       const existing = await transaction.run.findUnique({
         where: { idempotencyKey: progress.idempotency_key },
         select: { record: true },
@@ -43,7 +43,7 @@ export class PrismaRepository implements Repository {
 
   async updateState(runId: string, state: RunState, error: string | undefined = undefined): Promise<void> {
     await this.client.$transaction(async (transaction) => {
-      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952003)`;
+      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952003)::text AS lock_result`;
       const current = await transaction.run.findUnique({ where: { id: runId }, select: { record: true } });
       if (!current) throw new Error("Cannot update a missing run");
       const progress = current.record as unknown as StoredRun;
@@ -66,7 +66,7 @@ export class PrismaRepository implements Repository {
       ...run.canonical_evidence.challenges,
     ];
     await this.client.$transaction(async (transaction) => {
-      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952003)`;
+      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952003)::text AS lock_result`;
       const existing = await transaction.run.findUnique({ where: { id: run.run_id }, select: { record: true } });
       if (!existing) throw new Error("Cannot finalize a missing run reservation");
       const current = existing.record as unknown as StoredRun;
@@ -196,7 +196,7 @@ export class PrismaRepository implements Repository {
 
   async authorizeRun(payment: PaymentReference, runId: string, capacity?: RunCapacity): Promise<void> {
     await this.client.$transaction(async (transaction) => {
-      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952002)`;
+      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952002)::text AS lock_result`;
       const observedAt = new Date();
       await expireCapacityClaims(transaction, observedAt);
       const run = await transaction.run.findUnique({ where: { id: runId }, select: { record: true } });
@@ -272,7 +272,7 @@ export class PrismaRepository implements Repository {
 
   async claimRunCapacity(runId: string, capacity: RunCapacity, leaseExpiresAt: string): Promise<void> {
     await this.client.$transaction(async (transaction) => {
-      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952002)`;
+      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952002)::text AS lock_result`;
       const observedAt = new Date();
       await expireCapacityClaims(transaction, observedAt);
       const run = await transaction.run.findUnique({ where: { id: runId }, select: { record: true } });
@@ -302,14 +302,14 @@ export class PrismaRepository implements Repository {
 
   async releaseRunCapacity(runId: string): Promise<void> {
     await this.client.$transaction(async (transaction) => {
-      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952002)`;
+      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952002)::text AS lock_result`;
       await releaseCapacityClaim(transaction, runId);
     });
   }
 
   async releaseExpiredRunCapacity(runId: string, observedAt: string): Promise<boolean> {
     return this.client.$transaction(async (transaction) => {
-      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952002)`;
+      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952002)::text AS lock_result`;
       const row = await transaction.run.findUnique({
         where: { id: runId },
         select: { state: true, capacityLeaseExpiresAt: true },
@@ -324,7 +324,7 @@ export class PrismaRepository implements Repository {
 
   async markPaymentAmbiguous(runId: string, error: string): Promise<void> {
     await this.client.$transaction(async (transaction) => {
-      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952002)`;
+      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952002)::text AS lock_result`;
       const row = await transaction.run.findUnique({ where: { id: runId }, select: { record: true } });
       if (!row) return;
       const progress = row.record as unknown as StoredRun;
@@ -346,7 +346,7 @@ export class PrismaRepository implements Repository {
 
   async recordPaymentSettlement(runId: string, settlement: SettlementProgress): Promise<void> {
     await this.client.$transaction(async (transaction) => {
-      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952002)`;
+      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952002)::text AS lock_result`;
       const row = await transaction.run.findUnique({ where: { id: runId }, select: { record: true } });
       if (!row) throw new Error("Cannot record settlement for a missing run");
       const progress = row.record as unknown as StoredRun;
@@ -369,7 +369,7 @@ export class PrismaRepository implements Repository {
 
   async resetPaymentAmbiguous(runId: string): Promise<void> {
     await this.client.$transaction(async (transaction) => {
-      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952002)`;
+      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952002)::text AS lock_result`;
       const row = await transaction.run.findUnique({ where: { id: runId }, select: { record: true } });
       if (!row) return;
       const progress = row.record as unknown as StoredRun;
@@ -401,7 +401,7 @@ export class PrismaRepository implements Repository {
 
   async recordPublicationAttempt(runId: string, publication: PublicationProgress): Promise<void> {
     await this.client.$transaction(async (transaction) => {
-      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952003)`;
+      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952003)::text AS lock_result`;
       const row = await transaction.run.findUnique({ where: { id: runId }, select: { record: true } });
       if (!row) throw new Error("Cannot record publication for a missing run");
       const progress = row.record as unknown as StoredRun;
@@ -435,7 +435,7 @@ export class PrismaRepository implements Repository {
 
   async recordTargetPaymentAttempt(runId: string, attempt: TargetPaymentAttempt): Promise<void> {
     await this.client.$transaction(async (transaction) => {
-      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952004)`;
+      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952004)::text AS lock_result`;
       const row = await transaction.run.findUnique({ where: { id: runId }, select: { record: true } });
       if (!row) throw new Error("Cannot record target payment for a missing run");
       const progress = row.record as unknown as StoredRun;
@@ -452,7 +452,7 @@ export class PrismaRepository implements Repository {
 
   async recordTargetPaymentTransaction(runId: string, transactionHash: string): Promise<void> {
     await this.client.$transaction(async (transaction) => {
-      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952004)`;
+      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952004)::text AS lock_result`;
       const row = await transaction.run.findUnique({ where: { id: runId }, select: { record: true } });
       if (!row) throw new Error("Cannot record target settlement for a missing run");
       const progress = row.record as unknown as StoredRun;
@@ -476,7 +476,7 @@ export class PrismaRepository implements Repository {
 
   async clearTargetPaymentAttempt(runId: string): Promise<void> {
     await this.client.$transaction(async (transaction) => {
-      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952004)`;
+      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952004)::text AS lock_result`;
       const row = await transaction.run.findUnique({ where: { id: runId }, select: { record: true } });
       if (!row) return;
       const progress = row.record as unknown as StoredRun;
@@ -555,7 +555,7 @@ export class PrismaRepository implements Repository {
 
   async withTargetPaymentLock<T>(callback: () => Promise<T>): Promise<T> {
     return this.client.$transaction(async (transaction) => {
-      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952001)`;
+      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(1952001)::text AS lock_result`;
       return callback();
     }, { maxWait: 10_000, timeout: 35_000 });
   }
