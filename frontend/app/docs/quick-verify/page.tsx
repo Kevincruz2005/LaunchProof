@@ -1,2 +1,15 @@
 export const metadata = { title: "Quick verify" };
-export default function QuickVerifyPage() { return <main className="page"><section className="page-title"><p className="eyebrow">Four steps · under two minutes</p><h1>Verify the product, not the pitch</h1></section><ol className="verify-steps"><li><span>1</span><div><h2>Make one paid rehearsal</h2><p>Read the project card, connect a wallet, and call the fixed 0.01 USDT0 Genesis route.</p></div></li><li><span>2</span><div><h2>Confirm a precise failure</h2><p>Run the invalid-output fixture. Confirm the exact failed comparison, <code>invalid_output</code> classification, and <code>fixture</code> label.</p></div></li><li><span>3</span><div><h2>Confirm fresh success</h2><p>Run the healthy fixture. Confirm its fixed sample and three runtime-generated challenges pass.</p></div></li><li><span>4</span><div><h2>Recompute from chain evidence</h2><p>Open the Run, Receipt, and Verify pages. Follow both transaction links and run <code>./scripts/verify-run.sh RUN_ID</code>.</p></div></li></ol></main>; }
+
+export default function QuickVerifyPage() {
+  return (
+    <main className="page">
+      <section className="page-title"><p className="eyebrow">Verify each claim separately</p><h1>Verify the evidence, not the pitch</h1></section>
+      <ol className="verify-steps">
+        <li><span>1</span><div><h2>Confirm authorization mode</h2><p>Before submitting, check the public project card. Paid mode must be enabled and must show the expected chain, token, atomic price, and recipient. Local mode is unpaid development evidence.</p></div></li>
+        <li><span>2</span><div><h2>Inspect the observed gates</h2><p>Use a controlled fixture only when it is explicitly labeled <code>fixture</code>. Confirm the actual comparisons and classifications instead of relying on the overall badge.</p></div></li>
+        <li><span>3</span><div><h2>Verify settlement independently of publication</h2><p>A paid receipt must say <code>settled</code> and include a settlement transaction. Registry publication is a separate transaction and does not prove payment by itself.</p></div></li>
+        <li><span>4</span><div><h2>Cross-check registry storage</h2><p>Open the Passport and Verify pages. Compare the recorded hashes through the configured public RPC, and follow only the transaction links that are actually present.</p></div></li>
+      </ol>
+    </main>
+  );
+}

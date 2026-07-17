@@ -20,7 +20,7 @@ export function passportStatus(gates: Gates, infrastructureComplete: boolean): P
     gates.safe_to_rehearse,
   ];
   if (!infrastructureComplete || firstFour.includes("not_tested")) return "not-rehearsable";
-  if (firstFour.every((gate) => gate === "pass") && gates.paid_delivery !== "fail") return "verified";
+  if (firstFour.every((gate) => gate === "pass") && gates.paid_delivery === "pass") return "verified";
   return "needs-attention";
 }
 

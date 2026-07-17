@@ -2,9 +2,11 @@ import {
   createPublicClient,
   createWalletClient,
   decodeEventLog,
+  encodeFunctionData,
   fallback as fallbackTransport,
   hexToString,
   http,
+  keccak256,
   stringToHex,
   verifyMessage,
   zeroAddress,
@@ -12,15 +14,30 @@ import {
   type PublicClient,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { xLayer, xLayerTestnet } from "viem/chains";
+import { xLayerTestnet } from "viem/chains";
 import pLimit from "p-limit";
 import type { Config } from "../config.js";
 import type { Repository, RunProgress } from "../db/store.js";
-import type { CanonicalEvidence, ChainReference, RunRecord } from "../domain/types.js";
-import { contractStatus, gateBitmap } from "../domain/gates.js";
+import type { CanonicalEvidence, ChainReference, PaymentReference, RunRecord } from "../domain/types.js";
+import { contractStatus, gateBitmap, passportStatus } from "../domain/gates.js";
 import { hashJcs, sha256, toJcs } from "../evidence/canonical.js";
+import { validateCanonicalEvidence } from "../evidence/validate.js";
 import { manifestSigningBody } from "../launch-contract/schema.js";
 import { registryAbi } from "./abi.js";
+
+const registryWriterLimit = pLimit(1);
+
+export class PublicationOutcomeUnknownError extends Error {
+  constructor(readonly transactionHash: `0x${string}` | null, cause?: unknown) {
+    super(
+      transactionHash
+        ? `Registry publication outcome could not be proven for ${transactionHash}`
+        : "Registry publication submission outcome could not be proven",
+      { cause },
+    );
+    this.name = "PublicationOutcomeUnknownError";
+  }
+}
 
 export interface EvidenceHashes {
   evidenceHash: `0x${string}`;
@@ -54,6 +71,7 @@ interface LoadedChainRun {
   transactionHash: `0x${string}`;
   blockNumber: bigint | null;
   evidenceHashMatch: boolean;
+  canonicalJcsMatch: boolean;
   manifestHashMatch: boolean;
   inputHashMatch: boolean;
   resultHashMatch: boolean;
@@ -61,14 +79,32 @@ interface LoadedChainRun {
   gateStatusMatch: boolean;
   storageMatch: boolean;
   linkFieldsMatch: boolean;
+  evidenceSemanticsMatch: boolean;
+  launchPaymentTransferMatch: boolean;
+  targetPaymentTransferMatch: boolean | null;
+  registryRuntimeMatch: boolean;
   match: boolean;
 }
 
 export class RegistryService {
   constructor(private readonly config: Config) {}
 
-  async publish(evidence: CanonicalEvidence, hashes: EvidenceHashes): Promise<ChainReference> {
+  async publish(
+    evidence: CanonicalEvidence,
+    hashes: EvidenceHashes,
+    onPrepared?: (transactionHash: `0x${string}`) => Promise<void>,
+  ): Promise<ChainReference> {
+    return registryWriterLimit(() => this.publishExclusive(evidence, hashes, onPrepared));
+  }
+
+  private async publishExclusive(
+    evidence: CanonicalEvidence,
+    hashes: EvidenceHashes,
+    onPrepared?: (transactionHash: `0x${string}`) => Promise<void>,
+  ): Promise<ChainReference> {
     if (
+      evidence.execution_mode !== "testnet" ||
+      evidence.payments.launchproof.status !== "settled" ||
       !this.config.chainReady ||
       !this.config.REGISTRY_ADDRESS ||
       !this.config.REGISTRY_WRITER_PRIVATE_KEY ||
@@ -77,17 +113,25 @@ export class RegistryService {
       return { registry_address: this.config.REGISTRY_ADDRESS ?? zeroAddress, evidence_transaction_hash: zeroHash, block_number: "0", explorer_url: "", published: false };
     }
     const account = privateKeyToAccount(this.config.REGISTRY_WRITER_PRIVATE_KEY as `0x${string}`);
-    const activeChain = this.config.XLAYER_TESTNET ? xLayerTestnet : xLayer;
+    const activeChain = this.activeChain();
     const wallet = createWalletClient({ account, chain: activeChain, transport: http(this.config.XLAYER_RPC_URL) });
     const publicClient = this.client();
     const canonical = toJcs(evidence);
     const runId = evidence.run_id as `0x${string}`;
+    const alreadyPublished = await this.load(runId, publicClient);
+    if (alreadyPublished) {
+      if (alreadyPublished.match &&
+        alreadyPublished.args.evidenceHash === hashes.evidenceHash &&
+        alreadyPublished.canonical === canonical) {
+        return chainReferenceFromLoaded(alreadyPublished, this.config.REGISTRY_ADDRESS, this.config.chain.explorerUrl);
+      }
+      throw new Error("Run ID is already published with different evidence");
+    }
     const providerSignature =
       evidence.provider_declaration.verification_state === "verified" && evidence.provider_declaration.signature
         ? (evidence.provider_declaration.signature as `0x${string}`)
         : "0x";
-    const txHash = await wallet.writeContract({
-      address: this.config.REGISTRY_ADDRESS as `0x${string}`,
+    const data = encodeFunctionData({
       abi: registryAbi,
       functionName: "publishRun",
       args: [
@@ -111,30 +155,86 @@ export class RegistryService {
         stringToHex(canonical),
         providerSignature,
       ],
-      chain: activeChain,
-      account,
     });
-    const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash, confirmations: 1, timeout: 60_000 });
+    let serializedTransaction: `0x${string}`;
+    try {
+      const prepared = await wallet.prepareTransactionRequest({
+        account,
+        chain: activeChain,
+        to: this.config.REGISTRY_ADDRESS as `0x${string}`,
+        data,
+      });
+      serializedTransaction = await wallet.signTransaction(prepared);
+    } catch (error) {
+      throw new PublicationOutcomeUnknownError(null, error);
+    }
+    const txHash = keccak256(serializedTransaction);
+    // Persist the exact signed transaction hash and immutable evidence candidate before it can reach the RPC.
+    try {
+      await onPrepared?.(txHash);
+    } catch (error) {
+      throw new Error("Registry publication was not broadcast because its recovery candidate could not be persisted", { cause: error });
+    }
+    try {
+      const rpcChainId = await publicClient.getChainId();
+      if (rpcChainId !== 1952 || rpcChainId !== this.config.chain.id) {
+        throw new Error(`Registry broadcast refused: RPC returned chain ${rpcChainId}, expected 1952`);
+      }
+      const submittedHash = await wallet.sendRawTransaction({ serializedTransaction });
+      if (submittedHash.toLowerCase() !== txHash.toLowerCase()) {
+        throw new Error(`RPC returned transaction hash ${submittedHash}, expected ${txHash}`);
+      }
+    } catch (error) {
+      throw new PublicationOutcomeUnknownError(txHash, error);
+    }
+    let receipt;
+    try {
+      receipt = await publicClient.waitForTransactionReceipt({ hash: txHash, confirmations: 2, timeout: 60_000 });
+    } catch (error) {
+      const recovered = await this.load(runId, publicClient).catch(() => null);
+      if (recovered?.match && recovered.args.evidenceHash === hashes.evidenceHash && recovered.canonical === canonical) {
+        return chainReferenceFromLoaded(recovered, this.config.REGISTRY_ADDRESS, this.config.chain.explorerUrl);
+      }
+      throw new PublicationOutcomeUnknownError(txHash, error);
+    }
     if (receipt.status !== "success") throw new Error("Registry publication reverted");
-    const explorerBase = this.config.XLAYER_TESTNET
-      ? "https://www.oklink.com/xlayer-test/tx"
-      : "https://www.oklink.com/xlayer/tx";
-    return {
-      registry_address: this.config.REGISTRY_ADDRESS,
-      evidence_transaction_hash: txHash,
-      block_number: receipt.blockNumber.toString(),
-      explorer_url: `${explorerBase}/${txHash}`,
-      published: true,
-    };
+    const confirmed = await this.load(runId, publicClient, txHash).catch(() => null);
+    if (!confirmed?.match || confirmed.args.evidenceHash !== hashes.evidenceHash || confirmed.canonical !== canonical) {
+      throw new PublicationOutcomeUnknownError(txHash);
+    }
+    return chainReferenceFromLoaded(confirmed, this.config.REGISTRY_ADDRESS, this.config.chain.explorerUrl);
   }
 
-  async readPublishedRun(runId: string): Promise<RunRecord | null> {
-    const loaded = await this.load(runId);
-    return loaded?.match ? loaded.record : null;
+  async healthCheck(): Promise<boolean> {
+    if (!this.config.chainReady || !this.config.REGISTRY_ADDRESS || !this.config.XLAYER_RPC_URL) return false;
+    try {
+      const client = this.client();
+      const [chainId, code] = await Promise.all([
+        client.getChainId(),
+        client.getCode({ address: this.config.REGISTRY_ADDRESS as `0x${string}` }),
+      ]);
+      return chainId === this.config.chain.id && Boolean(code && code !== "0x");
+    } catch {
+      return false;
+    }
+  }
+
+  async readPublishedRun(runId: string, cache: RunRecord | null = null): Promise<RunRecord | null> {
+    try {
+      const loaded = await this.load(runId, this.client(), cache?.chain.evidence_transaction_hash);
+      return loaded?.match ? loaded.record : null;
+    } catch {
+      return null;
+    }
   }
 
   async verify(runId: string, cache: RunRecord | null) {
-    const loaded = await this.load(runId);
+    let loaded: LoadedChainRun | null;
+    try {
+      loaded = await this.load(runId, this.client(), cache?.chain.evidence_transaction_hash);
+    } catch {
+      return emptyVerification(false);
+    }
     if (!loaded) return emptyVerification(false);
     const cacheMatch = cache
       ? cache.evidence_hash === loaded.args.evidenceHash && cache.canonical_evidence_jcs === loaded.canonical
@@ -142,6 +242,7 @@ export class RegistryService {
     return {
       chain_record_found: true,
       evidence_hash_match: loaded.evidenceHashMatch,
+      canonical_jcs_match: loaded.canonicalJcsMatch,
       manifest_hash_match: loaded.manifestHashMatch,
       input_hash_match: loaded.inputHashMatch,
       result_hash_match: loaded.resultHashMatch,
@@ -149,6 +250,10 @@ export class RegistryService {
       gate_status_match: loaded.gateStatusMatch,
       storage_match: loaded.storageMatch,
       link_fields_match: loaded.linkFieldsMatch,
+      evidence_semantics_match: loaded.evidenceSemanticsMatch,
+      launch_payment_transfer_match: loaded.launchPaymentTransferMatch,
+      target_payment_transfer_match: loaded.targetPaymentTransferMatch,
+      registry_runtime_match: loaded.registryRuntimeMatch,
       cache_match: cacheMatch,
       match: loaded.match,
       transaction_hash: loaded.transactionHash,
@@ -160,11 +265,20 @@ export class RegistryService {
   async rebuildIndex(repository: Repository): Promise<number> {
     if (!this.config.chainReady || !this.config.REGISTRY_ADDRESS || !this.config.XLAYER_RPC_URL) return 0;
     const client = this.client();
+    const cursorKey = `${this.config.chain.network}:${this.config.REGISTRY_ADDRESS.toLowerCase()}`;
+    const [latestBlock, cursor] = await Promise.all([
+      client.getBlockNumber(),
+      repository.getChainCursor(cursorKey),
+    ]);
+    const overlapStart = cursor && cursor > 12n ? cursor - 12n : this.config.REGISTRY_DEPLOYMENT_BLOCK;
+    const fromBlock = overlapStart > this.config.REGISTRY_DEPLOYMENT_BLOCK
+      ? overlapStart
+      : this.config.REGISTRY_DEPLOYMENT_BLOCK;
     const logs = await this.getLogsChunked(client, {
       address: this.config.REGISTRY_ADDRESS as `0x${string}`,
       event: registryAbi[2],
-      fromBlock: this.config.REGISTRY_DEPLOYMENT_BLOCK,
-      toBlock: "latest",
+      fromBlock,
+      toBlock: latestBlock,
       strict: true,
     });
     let indexed = 0;
@@ -174,46 +288,126 @@ export class RegistryService {
       const loaded = await this.load(runId, client);
       if (!loaded?.match) throw new Error(`Refusing to index chain record ${runId}: verification failed`);
       const existing = await repository.getRun(runId);
-      if (!existing) await repository.createProgress(progressFromRecord(loaded.record));
-      await repository.savePayment(loaded.record.payment, runId);
-      if (loaded.record.target_payment) await repository.savePayment(loaded.record.target_payment, runId);
-      await repository.saveRun(loaded.record);
+      const record = existing
+        ? { ...loaded.record, idempotency_key: existing.idempotency_key }
+        : loaded.record;
+      if (!existing) await repository.createProgress(progressFromRecord(record));
+      await repository.savePayment(record.payment, runId);
+      if (record.target_payment) await repository.savePayment(record.target_payment, runId);
+      await repository.saveRun(record);
       indexed += 1;
     }
+    await repository.saveChainCursor(cursorKey, latestBlock);
     return indexed;
   }
 
+  /** Reconciles only persisted exact candidates; unknown or pending outcomes remain explicitly pending. */
+  async reconcilePendingPublications(repository: Repository): Promise<number> {
+    if (!this.config.chainReady || !this.config.REGISTRY_ADDRESS || !this.config.XLAYER_RPC_URL) return 0;
+    const client = this.client();
+    let finalized = 0;
+    for (const progress of await repository.pendingPublications()) {
+      const publication = progress.publication;
+      if (!publication?.candidate || !/^0x[0-9a-fA-F]{64}$/.test(publication.transaction_hash)) continue;
+      const candidate = publication.candidate;
+      const loaded = await this.load(progress.run_id, client, publication.transaction_hash).catch(() => null);
+      if (
+        loaded?.match &&
+        loaded.args.evidenceHash.toLowerCase() === publication.evidence_hash.toLowerCase() &&
+        loaded.canonical === candidate.canonical_evidence_jcs
+      ) {
+        await finalizeReconciledRun(repository, {
+          ...loaded.record,
+          idempotency_key: candidate.idempotency_key,
+        });
+        finalized += 1;
+        continue;
+      }
+
+      let receipt;
+      try {
+        receipt = await client.getTransactionReceipt({ hash: publication.transaction_hash as `0x${string}` });
+      } catch {
+        // Missing, pending, dropped, and RPC-indeterminate transactions are not safe to replace.
+        continue;
+      }
+      if (receipt.status !== "reverted") continue;
+
+      const hashes: EvidenceHashes = {
+        evidenceHash: candidate.evidence_hash,
+        manifestHash: candidate.manifest_hash,
+        inputHash: candidate.input_hash,
+        normalizedResultHash: candidate.normalized_result_hash,
+      };
+      try {
+        const chain = await this.publish(candidate.canonical_evidence, hashes, async (transactionHash) => {
+          const nextCandidate: RunRecord = {
+            ...candidate,
+            state: "publishing_on_chain",
+            chain: pendingChainReference(this.config, transactionHash),
+          };
+          await repository.recordPublicationAttempt(progress.run_id, {
+            transaction_hash: transactionHash,
+            evidence_hash: candidate.evidence_hash,
+            started_at: new Date().toISOString(),
+            candidate: nextCandidate,
+          });
+        });
+        await finalizeReconciledRun(repository, { ...candidate, state: "complete", chain });
+        finalized += 1;
+      } catch (error) {
+        if (!(error instanceof PublicationOutcomeUnknownError)) throw error;
+      }
+    }
+    return finalized;
+  }
+
   private activeChain() {
-    return this.config.XLAYER_TESTNET ? xLayerTestnet : xLayer;
+    return xLayerTestnet;
   }
 
   private client(): PublicClient {
     return createPublicClient({ chain: this.activeChain(), transport: readTransport(this.config) });
   }
 
-  private async load(runId: string, client = this.client()): Promise<LoadedChainRun | null> {
+  private async load(runId: string, client = this.client(), transactionHint?: string): Promise<LoadedChainRun | null> {
     if (!this.config.REGISTRY_ADDRESS || !this.config.XLAYER_RPC_URL || !/^0x[0-9a-fA-F]{64}$/.test(runId)) return null;
-    const stored = await client.readContract({
-      address: this.config.REGISTRY_ADDRESS as `0x${string}`,
-      abi: registryAbi,
-      functionName: "getRun",
-      args: [runId as `0x${string}`],
-    }) as unknown as StoredChainRecord;
+    const [stored, registryCode] = await Promise.all([
+      client.readContract({
+        address: this.config.REGISTRY_ADDRESS as `0x${string}`,
+        abi: registryAbi,
+        functionName: "getRun",
+        args: [runId as `0x${string}`],
+      }) as Promise<unknown> as Promise<StoredChainRecord>,
+      client.getCode({ address: this.config.REGISTRY_ADDRESS as `0x${string}` }),
+    ]);
     if (Number(stored.anchoredAt) === 0) return null;
-    const logs = await this.getLogsChunked(client, {
-      address: this.config.REGISTRY_ADDRESS as `0x${string}`,
-      event: registryAbi[2],
-      args: { runId: runId as `0x${string}` },
-      fromBlock: this.config.REGISTRY_DEPLOYMENT_BLOCK,
-      toBlock: "latest",
-      strict: true,
-    });
+    const registryRuntimeMatch = Boolean(
+      registryCode && registryCode !== "0x" && this.config.REGISTRY_RUNTIME_CODE_HASH &&
+      keccak256(registryCode).toLowerCase() === this.config.REGISTRY_RUNTIME_CODE_HASH.toLowerCase()
+    );
+    const logs = /^0x[0-9a-fA-F]{64}$/.test(transactionHint ?? "")
+      ? await this.logsFromReceipt(client, transactionHint as `0x${string}`, runId as `0x${string}`)
+      : await this.logsAtAnchoredTimestamp(client, runId as `0x${string}`, BigInt(stored.anchoredAt));
     const log = logs[0];
     if (!log?.transactionHash) return null;
     const decoded = decodeEventLog({ abi: registryAbi, data: log.data, topics: log.topics, strict: true });
     const args = decoded.args as unknown as PublishedArgs;
-    const canonical = hexToString(args.canonicalEvidence);
-    const evidence = JSON.parse(canonical) as CanonicalEvidence;
+    let canonical: string;
+    let evidence: CanonicalEvidence;
+    try {
+      canonical = hexToString(args.canonicalEvidence);
+      const rawEvidence = JSON.parse(canonical) as unknown;
+      const semantic = validateCanonicalEvidence(rawEvidence, this.config, args.runId, Number(args.anchoredAt));
+      if (!semantic) return null;
+      evidence = semantic.evidence;
+    } catch {
+      return null;
+    }
+    const semantic = validateCanonicalEvidence(evidence, this.config, args.runId, Number(args.anchoredAt));
+    if (!semantic) return null;
+    const evidenceSemanticsMatch = semantic.match;
+    const canonicalJcsMatch = toJcs(evidence) === canonical;
     const evidenceHash = sha256(canonical);
     const manifestHash = hashJcs(manifestSigningBody(evidence.manifest));
     const inputHash = hashJcs(evidence.hash_material.inputs);
@@ -223,7 +417,10 @@ export class RegistryService {
     const inputHashMatch = inputHash === args.inputHash;
     const resultHashMatch = resultHash === args.normalizedResultHash;
     const providerSignatureMatch = await declarationMatches(evidence, manifestHash, args);
-    const gateStatusMatch = gateBitmap(evidence.gates) === args.gateBitmap && contractStatus(evidence.passport_status) === args.status;
+    const recomputedStatus = passportStatus(evidence.gates, evidence.passport_status !== "not-rehearsable");
+    const gateStatusMatch = gateBitmap(evidence.gates) === args.gateBitmap &&
+      evidence.passport_status === recomputedStatus &&
+      contractStatus(recomputedStatus) === args.status;
     const expectedPreviousRun = evidence.previous_run_id ? evidence.previous_run_id.toLowerCase() : zeroHash;
     const linkFieldsMatch =
       evidence.run_id.toLowerCase() === args.runId.toLowerCase() &&
@@ -233,8 +430,27 @@ export class RegistryService {
       evidence.provider_declaration.provider_address.toLowerCase() === args.provider.toLowerCase() &&
       (evidence.label === "fixture") === args.isFixture;
     const storageMatch = chainRecordMatchesEvent(stored, args);
-    const match = evidenceHashMatch && manifestHashMatch && inputHashMatch && resultHashMatch && providerSignatureMatch && gateStatusMatch && storageMatch && linkFieldsMatch;
-    const record = recordFromChain(evidence, canonical, args, this.config.REGISTRY_ADDRESS, log.transactionHash, log.blockNumber);
+    const launchPaymentTransferMatch = await paymentTransferMatches(
+      client,
+      evidence.payments.launchproof,
+      log.blockNumber,
+    );
+    const targetPaymentTransferMatch = evidence.payments.target
+      ? await paymentTransferMatches(client, evidence.payments.target, log.blockNumber)
+      : null;
+    const transfersMatch = launchPaymentTransferMatch && targetPaymentTransferMatch !== false;
+    const match = canonicalJcsMatch && evidenceHashMatch && manifestHashMatch && inputHashMatch &&
+      resultHashMatch && providerSignatureMatch && gateStatusMatch && storageMatch &&
+      linkFieldsMatch && evidenceSemanticsMatch && transfersMatch && registryRuntimeMatch;
+    const record = recordFromChain(
+      evidence,
+      canonical,
+      args,
+      this.config.REGISTRY_ADDRESS,
+      log.transactionHash,
+      log.blockNumber,
+      this.config.chain.explorerUrl,
+    );
     return {
       record,
       evidence,
@@ -243,6 +459,7 @@ export class RegistryService {
       transactionHash: log.transactionHash,
       blockNumber: log.blockNumber,
       evidenceHashMatch,
+      canonicalJcsMatch,
       manifestHashMatch,
       inputHashMatch,
       resultHashMatch,
@@ -250,8 +467,62 @@ export class RegistryService {
       gateStatusMatch,
       storageMatch,
       linkFieldsMatch,
+      evidenceSemanticsMatch,
+      launchPaymentTransferMatch,
+      targetPaymentTransferMatch,
+      registryRuntimeMatch,
       match,
     };
+  }
+
+  /** Locate an unknown run without replaying registry history: binary-search its immutable block timestamp. */
+  private async logsAtAnchoredTimestamp(
+    client: PublicClient,
+    runId: `0x${string}`,
+    anchoredAt: bigint,
+  ): Promise<any[]> {
+    const latest = await client.getBlockNumber();
+    const start = await this.firstBlockAtOrAfter(client, anchoredAt, latest);
+    if (start > latest) return [];
+    const startBlock = await client.getBlock({ blockNumber: start });
+    if (startBlock.timestamp !== anchoredAt) return [];
+    const after = await this.firstBlockAtOrAfter(client, anchoredAt + 1n, latest);
+    const end = after > latest ? latest : after - 1n;
+    return client.getLogs({
+      address: this.config.REGISTRY_ADDRESS as `0x${string}`,
+      event: registryAbi[2],
+      args: { runId },
+      fromBlock: start,
+      toBlock: end,
+      strict: true,
+    });
+  }
+
+  private async firstBlockAtOrAfter(client: PublicClient, timestamp: bigint, latest: bigint): Promise<bigint> {
+    let low = this.config.REGISTRY_DEPLOYMENT_BLOCK;
+    let high = latest + 1n;
+    while (low < high) {
+      const middle = low + (high - low) / 2n;
+      const block = await client.getBlock({ blockNumber: middle });
+      if (block.timestamp < timestamp) low = middle + 1n;
+      else high = middle;
+    }
+    return low;
+  }
+
+  private async logsFromReceipt(client: PublicClient, transactionHash: `0x${string}`, runId: `0x${string}`): Promise<any[]> {
+    const receipt = await client.getTransactionReceipt({ hash: transactionHash });
+    if (receipt.status !== "success") return [];
+    return receipt.logs.filter((log) => {
+      if (log.address.toLowerCase() !== this.config.REGISTRY_ADDRESS?.toLowerCase()) return false;
+      try {
+        const decoded = decodeEventLog({ abi: registryAbi, data: log.data, topics: log.topics, strict: true });
+        return decoded.eventName === "RunPublished" &&
+          String((decoded.args as { runId?: unknown }).runId).toLowerCase() === runId.toLowerCase();
+      } catch {
+        return false;
+      }
+    });
   }
 
   private async getLogsChunked(
@@ -293,6 +564,32 @@ export class RegistryService {
     const results = await Promise.all(tasks);
     return results.flat();
   }
+}
+
+function chainReferenceFromLoaded(loaded: LoadedChainRun, registryAddress: string, explorerUrl: string): ChainReference {
+  return {
+    registry_address: registryAddress,
+    evidence_transaction_hash: loaded.transactionHash,
+    block_number: loaded.blockNumber?.toString() ?? "0",
+    explorer_url: `${explorerUrl}/tx/${loaded.transactionHash}`,
+    published: true,
+  };
+}
+
+function pendingChainReference(config: Config, transactionHash: `0x${string}`): ChainReference {
+  return {
+    registry_address: config.REGISTRY_ADDRESS ?? zeroAddress,
+    evidence_transaction_hash: transactionHash,
+    block_number: "0",
+    explorer_url: `${config.chain.explorerUrl}/tx/${transactionHash}`,
+    published: false,
+  };
+}
+
+async function finalizeReconciledRun(repository: Repository, record: RunRecord): Promise<void> {
+  await repository.savePayment(record.payment, record.run_id);
+  if (record.target_payment) await repository.savePayment(record.target_payment, record.run_id);
+  await repository.saveRun(record);
 }
 
 async function declarationMatches(evidence: CanonicalEvidence, manifestHash: `0x${string}`, args: PublishedArgs): Promise<boolean> {
@@ -341,6 +638,7 @@ function recordFromChain(
   registryAddress: string,
   transactionHash: `0x${string}`,
   blockNumber: bigint | null,
+  explorerUrl: string,
 ): RunRecord {
   return {
     run_id: args.runId,
@@ -367,7 +665,7 @@ function recordFromChain(
       registry_address: registryAddress,
       evidence_transaction_hash: transactionHash,
       block_number: blockNumber?.toString() ?? "0",
-      explorer_url: `https://www.oklink.com/xlayer/tx/${transactionHash}`, // explorer is resolved at publish time
+      explorer_url: `${explorerUrl}/tx/${transactionHash}`,
       published: true,
     },
     remediation: evidence.remediation,
@@ -381,6 +679,9 @@ function progressFromRecord(record: RunRecord): RunProgress {
     idempotency_key: record.idempotency_key,
     state: "publishing_on_chain",
     target: record.canonical_evidence.target,
+    operation: record.previous_run_id ? "renewal" : "genesis",
+    previous_run_id: record.previous_run_id,
+    payment: record.payment,
     created_at: record.generated_at,
     updated_at: record.generated_at,
     error: null,
@@ -396,6 +697,7 @@ function emptyVerification(found: boolean) {
   return {
     chain_record_found: found,
     evidence_hash_match: false,
+    canonical_jcs_match: false,
     manifest_hash_match: false,
     input_hash_match: false,
     result_hash_match: false,
@@ -403,10 +705,65 @@ function emptyVerification(found: boolean) {
     gate_status_match: false,
     storage_match: false,
     link_fields_match: false,
+    evidence_semantics_match: false,
+    launch_payment_transfer_match: false,
+    target_payment_transfer_match: null,
+    registry_runtime_match: false,
     cache_match: null,
     match: false,
     transaction_hash: null,
     block_number: null,
     canonical_evidence: null,
   };
+}
+
+const transferEvent = [{
+  type: "event",
+  name: "Transfer",
+  inputs: [
+    { name: "from", type: "address", indexed: true },
+    { name: "to", type: "address", indexed: true },
+    { name: "value", type: "uint256", indexed: false },
+  ],
+}] as const;
+
+async function paymentTransferMatches(
+  client: PublicClient,
+  payment: PaymentReference,
+  publicationBlock: bigint | null,
+): Promise<boolean> {
+  if (
+    payment.status !== "settled" ||
+    !payment.settlement_transaction ||
+    !payment.payer ||
+    !payment.recipient ||
+    payment.payment_id.toLowerCase() !== payment.settlement_transaction.toLowerCase() ||
+    payment.amount !== payment.amount_atomic
+  ) return false;
+  try {
+    const receipt = await client.getTransactionReceipt({
+      hash: payment.settlement_transaction as `0x${string}`,
+    });
+    if (receipt.status !== "success" || (publicationBlock !== null && receipt.blockNumber > publicationBlock)) {
+      return false;
+    }
+    const amount = BigInt(payment.amount_atomic);
+    const transferMatches = receipt.logs.some((log) => {
+      if (log.address.toLowerCase() !== payment.asset.toLowerCase()) return false;
+      try {
+        const decoded = decodeEventLog({ abi: transferEvent, data: log.data, topics: log.topics, strict: true });
+        const transfer = decoded.args as { from: string; to: string; value: bigint };
+        return transfer.from.toLowerCase() === payment.payer!.toLowerCase() &&
+          transfer.to.toLowerCase() === payment.recipient!.toLowerCase() &&
+          transfer.value === amount;
+      } catch {
+        return false;
+      }
+    });
+    if (!transferMatches) return false;
+    const block = await client.getBlock({ blockNumber: receipt.blockNumber });
+    return new Date(Number(block.timestamp) * 1_000).toISOString() === payment.timestamp;
+  } catch {
+    return false;
+  }
 }

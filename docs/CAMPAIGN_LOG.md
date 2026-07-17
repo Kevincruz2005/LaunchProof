@@ -8,3 +8,5 @@ This file records real, attributable campaign activity only. Targets are goals, 
 Allowed categories: `invitation`, `consented_rehearsal`, `testimonial`, `voluntary_share`, and `demo_case`.
 
 Never crawl providers, self-purchase, manufacture an order, fabricate a testimonial, reward a positive post, describe a testimonial as an OKX marketplace review, or count a team-owned share toward distribution goals.
+
+Every payment/evidence link must state its network. X Layer testnet (`eip155:1952`) and test USD₮0 have no monetary value and must never be described as mainnet settlement, revenue, or a customer purchase.

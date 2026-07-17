@@ -22,6 +22,10 @@ export function GateGrid({ gates }: { gates: Record<string, GateState> }) {
 }
 
 export function StatusBadge({ status }: { status: string }) {
-  const normalized = status.replaceAll("_", " ");
+  const normalized = status === "verified"
+    ? "gates verified"
+    : status === "needs-attention"
+      ? "gates need attention"
+      : status.replaceAll("_", " ");
   return <span className={`status status-${status}`}>{status === "verified" ? "✓" : status === "needs-attention" ? "!" : "—"} {normalized}</span>;
 }

@@ -1,69 +1,116 @@
 import { createHash } from "node:crypto";
 import express, { type NextFunction, type Request, type RequestHandler, type Response } from "express";
 import { canonicalize } from "json-canonicalize";
-import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import { privateKeyToAccount } from "viem/accounts";
 import { OKXFacilitatorClient } from "@okxweb3/x402-core";
+import type { Network } from "@okxweb3/x402-core/types";
 import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
 import { paymentMiddleware, x402ResourceServer } from "@okxweb3/x402-express";
 
 export type FixtureVariant = "healthy" | "invalid-output" | "schema-drift" | "timeout";
 
-const NETWORK = "eip155:196" as const;
-const USDT0 = "0x779ded0c9e1022225f8e0630b35a9b54be713736" as const;
+const XLAYER_TESTNET_USDT0_ADDRESS = "0x9e29b3aada05bf2d2c827af80bd28dc0b9b4fb0c";
 
 interface FixtureConfig {
   variant: FixtureVariant;
   port: number;
+  bindHost: "127.0.0.1" | "0.0.0.0" | "::1";
   publicBaseUrl: string;
   sourceRevision: string;
   providerKey: `0x${string}`;
-  production: boolean;
   x402Enabled: boolean;
+  network: Network;
+  assetAddress: `0x${string}`;
   paymentRecipient?: `0x${string}`;
   paymentAmount: string;
   okxApiKey: string | undefined;
   okxSecretKey: string | undefined;
   okxPassphrase: string | undefined;
+  okxBaseUrl: string;
 }
 
 function config(variant: FixtureVariant): FixtureConfig {
   const production = process.env.NODE_ENV === "production";
   const providerKey = process.env.FIXTURE_PROVIDER_PRIVATE_KEY as `0x${string}` | undefined;
-  if (production && !providerKey) throw new Error("Production fixture requires FIXTURE_PROVIDER_PRIVATE_KEY");
-  const port = Number(process.env.PORT ?? 4100);
-  const publicBaseUrl = process.env.PUBLIC_BASE_URL ?? `https://${variant}.fixtures.launchproof.example`;
-  if (production && (!process.env.PUBLIC_BASE_URL || !publicBaseUrl.startsWith("https://") || publicBaseUrl.includes(".example"))) {
-    throw new Error("Production fixture requires its real public HTTPS base URL");
+  if (!providerKey || !/^0x[0-9a-fA-F]{64}$/.test(providerKey)) {
+    throw new Error("Fixture requires a unique FIXTURE_PROVIDER_PRIVATE_KEY; generate it outside the process and never commit it");
   }
-  const sourceRevision = process.env.SOURCE_REVISION ?? `fixture-${variant}-development`;
-  if (production && !/^[0-9a-f]{40}$/i.test(sourceRevision)) throw new Error("Production fixture SOURCE_REVISION must be an immutable commit SHA");
+  const port = Number(process.env.PORT ?? 4100);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("Fixture PORT must be an integer between 1 and 65535");
+  const bindHost = process.env.FIXTURE_BIND_HOST ?? "127.0.0.1";
+  if (bindHost !== "127.0.0.1" && bindHost !== "0.0.0.0" && bindHost !== "::1") {
+    throw new Error("FIXTURE_BIND_HOST must be 127.0.0.1, ::1, or 0.0.0.0");
+  }
+  const publicBaseUrl = required("PUBLIC_BASE_URL").replace(/\/$/, "");
+  const parsedPublicUrl = new URL(publicBaseUrl);
+  if (parsedPublicUrl.origin !== publicBaseUrl || (production && parsedPublicUrl.protocol !== "https:")) {
+    throw new Error("PUBLIC_BASE_URL must be a URL origin; production fixtures require HTTPS");
+  }
+  const sourceRevision = required("SOURCE_REVISION");
+  if (!/^[0-9a-f]{40}$/i.test(sourceRevision)) throw new Error("Fixture SOURCE_REVISION must be the exact immutable 40-character Git commit SHA");
+  if (required("XLAYER_TESTNET") !== "true" || process.env.ALLOW_XLAYER_MAINNET === "true") {
+    throw new Error("Controlled public fixtures are restricted to X Layer testnet");
+  }
+  const chainId = required("XLAYER_CHAIN_ID");
+  if (!/^[1-9][0-9]*$/.test(chainId)) throw new Error("XLAYER_CHAIN_ID must be a positive decimal chain ID");
+  if (chainId !== "1952") throw new Error("X Layer testnet chain ID must be 1952");
+  const network = required("XLAYER_NETWORK") as Network;
+  if (network !== `eip155:${chainId}`) throw new Error("XLAYER_NETWORK must match XLAYER_CHAIN_ID in CAIP-2 form");
+  const assetAddress = required("XLAYER_USDT0_ADDRESS") as `0x${string}`;
+  if (!/^0x[0-9a-fA-F]{40}$/.test(assetAddress) || /^0x0{40}$/i.test(assetAddress)) throw new Error("XLAYER_USDT0_ADDRESS must be a nonzero EVM address");
+  if (assetAddress.toLowerCase() !== XLAYER_TESTNET_USDT0_ADDRESS) {
+    throw new Error(`Controlled fixtures require the official X Layer testnet USD₮0 contract ${XLAYER_TESTNET_USDT0_ADDRESS}`);
+  }
   const x402Enabled = variant === "healthy" && process.env.X402_ENABLED === "true";
-  if (production && variant === "healthy" && !x402Enabled) throw new Error("The production healthy fixture must enable its x402 paid resource");
+  if (production && variant === "healthy" && !x402Enabled) {
+    throw new Error("The production healthy fixture requires its exact x402 paid resource");
+  }
   const paymentRecipient = process.env.PAYMENT_RECIPIENT as `0x${string}` | undefined;
-  if (x402Enabled && (!paymentRecipient || !process.env.OKX_API_KEY || !process.env.OKX_SECRET_KEY || !process.env.OKX_PASSPHRASE)) {
+  if (x402Enabled && (!paymentRecipient || !/^0x[0-9a-fA-F]{40}$/.test(paymentRecipient) || /^0x0{40}$/i.test(paymentRecipient) || !process.env.OKX_API_KEY || !process.env.OKX_SECRET_KEY || !process.env.OKX_PASSPHRASE)) {
     throw new Error("Paid fixture requires recipient and OKX facilitator credentials");
   }
-  const paymentAmount = process.env.PAYMENT_AMOUNT_ATOMIC ?? "10000";
+  const paymentAmount = required("PAYMENT_AMOUNT_ATOMIC");
   if (!/^[0-9]+$/.test(paymentAmount) || BigInt(paymentAmount) < 1n || BigInt(paymentAmount) > 100_000n) {
     throw new Error("Fixture PAYMENT_AMOUNT_ATOMIC must be between 1 and 100000");
+  }
+  const okxBaseUrl = required("OKX_BASE_URL");
+  const parsedOkxUrl = new URL(okxBaseUrl);
+  if (
+    parsedOkxUrl.origin !== "https://web3.okx.com" ||
+    parsedOkxUrl.pathname !== "/" ||
+    parsedOkxUrl.search ||
+    parsedOkxUrl.hash ||
+    parsedOkxUrl.username ||
+    parsedOkxUrl.password
+  ) {
+    throw new Error("OKX_BASE_URL must be the exact official origin https://web3.okx.com");
   }
   return {
     variant,
     port,
+    bindHost,
     publicBaseUrl,
     sourceRevision,
-    providerKey: providerKey ?? generatePrivateKey(),
-    production,
+    providerKey,
     x402Enabled,
+    network,
+    assetAddress,
     ...(paymentRecipient ? { paymentRecipient } : {}),
     paymentAmount,
     okxApiKey: process.env.OKX_API_KEY,
     okxSecretKey: process.env.OKX_SECRET_KEY,
     okxPassphrase: process.env.OKX_PASSPHRASE,
+    okxBaseUrl: parsedOkxUrl.origin,
   };
 }
 
-export function startFixture(variant: FixtureVariant) {
+function required(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`Fixture requires ${name}`);
+  return value;
+}
+
+export function createFixtureApp(variant: FixtureVariant): express.Express {
   const settings = config(variant);
   const account = privateKeyToAccount(settings.providerKey);
   const app = express();
@@ -78,7 +125,15 @@ export function startFixture(variant: FixtureVariant) {
   });
 
   app.get("/healthz", (_request, response) => {
-    response.json({ status: "ok", fixture: true, variant, source_revision: settings.sourceRevision, x402: settings.x402Enabled });
+    response.json({
+      status: "ok",
+      fixture: true,
+      variant,
+      source_revision: settings.sourceRevision,
+      x402: settings.x402Enabled,
+      network: settings.network,
+      asset: settings.assetAddress,
+    });
   });
   app.get("/.well-known/launch-contract.json", async (_request, response, next) => {
     try {
@@ -105,8 +160,15 @@ export function startFixture(variant: FixtureVariant) {
   app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
     response.status(500).json({ error: error instanceof Error ? error.message : "fixture_error" });
   });
-  app.listen(settings.port, "0.0.0.0", () => {
-    process.stdout.write(JSON.stringify({ event: "fixture_started", variant, port: settings.port, provider: account.address }) + "\n");
+  return app;
+}
+
+export function startFixture(variant: FixtureVariant): void {
+  const settings = config(variant);
+  const account = privateKeyToAccount(settings.providerKey);
+  const app = createFixtureApp(variant);
+  app.listen(settings.port, settings.bindHost, () => {
+    process.stdout.write(JSON.stringify({ event: "fixture_started", variant, host: settings.bindHost, port: settings.port, provider: account.address }) + "\n");
   });
 }
 
@@ -116,13 +178,22 @@ function createPaidMiddleware(settings: FixtureConfig): RequestHandler {
     apiKey: settings.okxApiKey!,
     secretKey: settings.okxSecretKey!,
     passphrase: settings.okxPassphrase!,
+    baseUrl: settings.okxBaseUrl,
+    syncSettle: true,
   });
   const server = new x402ResourceServer(facilitator);
-  server.register(NETWORK, new ExactEvmScheme());
+  server.register(settings.network, new ExactEvmScheme());
   return paymentMiddleware(
     {
       "POST /paid/mcp": {
-        accepts: [{ scheme: "exact", network: NETWORK, payTo: settings.paymentRecipient, price: `$${Number(settings.paymentAmount) / 1_000_000}` }],
+        accepts: [
+          {
+            scheme: "exact",
+            network: settings.network,
+            payTo: settings.paymentRecipient,
+            price: { amount: settings.paymentAmount, asset: settings.assetAddress },
+          },
+        ],
         description: "LaunchProof controlled paid-delivery fixture",
         mimeType: "application/json",
       },
@@ -151,15 +222,19 @@ async function signedManifest(settings: FixtureConfig, account: ReturnType<typeo
     ...(settings.x402Enabled && settings.paymentRecipient
       ? {
           payment: {
-            network: NETWORK,
-            asset: USDT0,
+            network: settings.network,
+            asset: settings.assetAddress,
             amount: settings.paymentAmount,
             recipient: settings.paymentRecipient,
             resource_url: `${settings.publicBaseUrl}/paid/mcp`,
           },
         }
       : {}),
-    safe_use: ["read-only sample data", "no account", "no external side effect"],
+    safe_use: [
+      "tool is read-only for synthetic sample data",
+      "no credentials or account",
+      "no tool side effect beyond the declared x402 payment",
+    ],
     source_revision: settings.sourceRevision,
     challenge_profile: {
       name: "structured-extraction-v1",
@@ -222,7 +297,8 @@ async function handleMcp(request: Request, response: Response, settings: Fixture
       toolError(response, message.id, "INVALID_INPUT", "invoice_text or document_text is required and must be at most 1000 characters");
       return;
     }
-    if (settings.variant === "timeout" && input.document_text) await new Promise((resolve) => setTimeout(resolve, 9_000));
+    const delayMs = fixtureChallengeDelayMs(settings.variant, input);
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
     const output = normalize(text);
     if (!output) {
       toolError(response, message.id, "INVALID_INPUT", "Input does not match the synthetic invoice format");
@@ -238,6 +314,10 @@ async function handleMcp(request: Request, response: Response, settings: Fixture
     return;
   }
   rpcError(response, message.id, -32601, "Method not found");
+}
+
+export function fixtureChallengeDelayMs(variant: FixtureVariant, input: Record<string, unknown>): number {
+  return variant === "timeout" && typeof input.document_text === "string" ? 9_000 : 0;
 }
 
 function normalize(text: string): Record<string, unknown> | null {

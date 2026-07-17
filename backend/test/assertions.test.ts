@@ -17,16 +17,21 @@ describe("assertion engine", () => {
     expect(comparisons.find((item) => item.field === "total")?.classification).toBe("invalid_output");
   });
 
-  it("supports the four bounded assertion rules", () => {
+  it("supports the three deterministic assertion rules", () => {
     const comparisons = evaluateAssertions(
-      { exact: "ok", high: 0.95, low: 3, code: "INV-101" },
+      { exact: "ok", high: 0.95, low: 3 },
       [
         { path: "$.exact", rule: "equals", value: "ok" },
         { path: "$.high", rule: "gte", value: 0.9 },
         { path: "$.low", rule: "lte", value: 4 },
-        { path: "$.code", rule: "regex", value: "^INV-[0-9]+$" },
       ],
     );
     expect(comparisons.every((item) => item.match)).toBe(true);
+  });
+
+  it("never treats an undefined expected field and undefined output as a match", () => {
+    const [comparison] = compareChallenge({}, {}, ["invented"]);
+    expect(comparison?.match).toBe(false);
+    expect(comparison?.classification).toBe("schema_drift");
   });
 });

@@ -18,7 +18,10 @@ describe("public and paid routes", () => {
     expect((await request(app).get("/healthz")).status).toBe(200);
     const card = await request(app).get("/.well-known/launchproof.json");
     expect(card.status).toBe(200);
-    expect(card.body.tools).toEqual(["rehearse_launch_contract", "get_service_passport"]);
+    expect(card.body.tools).toEqual(["rehearse_launch_contract"]);
+    expect(card.body.public_tools).toEqual(["get_service_passport"]);
+    expect(card.body.chain.network).toBe("eip155:1952");
+    expect(card.body.payments.genesis_amount_atomic).toBe("10000");
   });
 
   it("does not silently simulate paid access", async () => {
@@ -57,6 +60,9 @@ describe("public and paid routes", () => {
       idempotency_key: "alias-test-key",
       state: "payment_required",
       target: "https://fixture.example",
+      operation: "genesis",
+      previous_run_id: null,
+      payment: null,
       created_at: "2026-07-14T00:00:00.000Z",
       updated_at: "2026-07-14T00:00:00.000Z",
       error: null,
@@ -77,5 +83,35 @@ describe("public and paid routes", () => {
     expect(response.body.fixtures.every((fixture: Record<string, unknown>) =>
       Object.hasOwn(fixture, "launch_contract") && Object.hasOwn(fixture, "declaration_address"),
     )).toBe(true);
+  });
+
+  it("rate-limits unpaid challenges by IP rather than an unverified payer header", async () => {
+    const repository = new MemoryRepository();
+    const limited = createApp(loadConfig({
+      NODE_ENV: "test",
+      PAID_RATE_LIMIT_PER_HOUR: "100",
+      FREE_RATE_LIMIT_PER_MINUTE: "2",
+    }), repository);
+    const attempt = (index: number) => request(limited)
+      .post("/api/rehearsals")
+      .set("payment-signature", `fake-payer-${index}`)
+      .send({ url: "https://example.com", idempotency_key: `unpaid-key-${index}` });
+    expect((await attempt(1)).status).toBe(402);
+    expect((await attempt(2)).status).toBe(402);
+    expect((await attempt(3)).status).toBe(429);
+    expect(await repository.getByIdempotencyKey("unpaid-key-1")).toBeNull();
+  });
+
+  it("does not expose internal exception messages in a 500 response", async () => {
+    class FailingRepository extends MemoryRepository {
+      override async healthCheck(): Promise<boolean> {
+        throw new Error("DATABASE_URL=postgresql://user:supersecret@example.invalid/db");
+      }
+    }
+    const response = await request(createApp(config, new FailingRepository())).get("/healthz");
+    expect(response.status).toBe(500);
+    expect(JSON.stringify(response.body)).not.toContain("supersecret");
+    expect(response.body.request_id).toBeTruthy();
+    expect(response.headers["x-request-id"]).toBe(response.body.request_id);
   });
 });

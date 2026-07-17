@@ -24,11 +24,11 @@ export function FixtureCatalog() {
     <main className="page">
       <section className="page-title"><p className="eyebrow">Passing and classified failure cases</p><h1>Controlled public fixtures</h1><p>Known targets make the verification path repeatable without presenting synthetic evidence as a production agent.</p></section>
       {error ? <p className="error">{error}</p> : null}
-      {!fixtures ? <div className="loading">Reading fixture catalog...</div> : (
+      {!fixtures && !error ? <div className="loading">Reading fixture catalog...</div> : fixtures ? (
         <section className="fixture-grid">
           {fixtures.map((fixture) => (
             <article className="panel fixture-card" key={fixture.variant}>
-              <div className="fixture-head"><span className={`fixture-mark fixture-${fixture.variant === "healthy" ? "pass" : "fail"}`}>{fixture.variant === "healthy" ? "OK" : "FAIL"}</span><small>Controlled fixture</small></div>
+              <div className="fixture-head"><span className={`fixture-mark fixture-${fixture.variant === "healthy" ? "pass" : "fail"}`}>{fixture.variant === "healthy" ? "EXPECT PASS" : "EXPECT FAIL"}</span><small>Controlled fixture · declared outcome, not a live health result</small></div>
               <h2>{fixture.variant.replaceAll("-", " ")}</h2>
               <p>{fixture.intended_outcome}</p>
               <dl className="detail-list fixture-details"><div><dt>Declaration</dt><dd><code>{fixture.declaration_address ?? "not deployed"}</code></dd></div></dl>
@@ -40,7 +40,7 @@ export function FixtureCatalog() {
             </article>
           ))}
         </section>
-      )}
+      ) : null}
     </main>
   );
 }

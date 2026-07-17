@@ -5,6 +5,11 @@ coverage/
 .env
 .env.*
 !.env.example
+.secrets/
+secrets/
+*.key
+*.pem
+*.keystore
 out/
 contracts/out-solc/
 cache/

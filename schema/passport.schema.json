@@ -1,15 +1,44 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://launchproof.example/schema/passport.schema.json",
   "title": "LaunchProof Service Passport",
   "type": "object",
-  "required": ["run_id", "label", "scope", "passport_status", "gates", "evidence_hash", "manifest_hash", "input_hash", "normalized_result_hash", "generated_at", "limitations"],
+  "additionalProperties": false,
+  "required": [
+    "run_id",
+    "idempotency_key",
+    "state",
+    "previous_run_id",
+    "label",
+    "scope",
+    "passport_status",
+    "gates",
+    "canonical_evidence",
+    "canonical_evidence_jcs",
+    "evidence_hash",
+    "manifest_hash",
+    "input_hash",
+    "normalized_result_hash",
+    "source_version_sha",
+    "build_commit_sha",
+    "generated_at",
+    "provider_declaration",
+    "payment",
+    "target_payment",
+    "chain",
+    "remediation",
+    "limitations"
+  ],
   "properties": {
-    "run_id": { "type": "string" },
-    "previous_run_id": { "type": ["string", "null"] },
-    "label": { "enum": ["fixture", "production", "local_only"] },
+    "run_id": { "$ref": "#/$defs/hash" },
+    "idempotency_key": { "type": "string", "minLength": 1 },
+    "state": { "enum": ["complete", "complete_local"] },
+    "previous_run_id": { "oneOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
+    "label": { "enum": ["fixture", "external"], "$comment": "Provenance only; execution mode is recorded in canonical_evidence." },
     "scope": { "const": "structured-extraction-v1 only" },
-    "passport_status": { "enum": ["verified", "needs-attention", "not-rehearsable"] },
+    "passport_status": {
+      "enum": ["verified", "needs-attention", "not-rehearsable"],
+      "description": "verified is valid only when every gate, including paid_delivery, is pass."
+    },
     "gates": {
       "type": "object",
       "required": ["discoverable", "contract_correct", "fresh_challenge", "safe_to_rehearse", "paid_delivery"],
@@ -22,18 +51,80 @@
         "paid_delivery": { "$ref": "#/$defs/gate" }
       }
     },
-    "canonical_evidence": { "type": "object" },
+    "canonical_evidence": { "$ref": "evidence.schema.json" },
+    "canonical_evidence_jcs": { "type": "string", "minLength": 2 },
     "evidence_hash": { "$ref": "#/$defs/hash" },
     "manifest_hash": { "$ref": "#/$defs/hash" },
     "input_hash": { "$ref": "#/$defs/hash" },
     "normalized_result_hash": { "$ref": "#/$defs/hash" },
-    "source_version_sha": { "type": "string" },
-    "build_commit_sha": { "type": "string" },
+    "source_version_sha": { "$ref": "#/$defs/commit" },
+    "build_commit_sha": { "$ref": "#/$defs/commit" },
     "generated_at": { "type": "string", "format": "date-time" },
-    "limitations": { "type": "array", "items": { "type": "string" } }
+    "provider_declaration": { "$ref": "#/$defs/provider_declaration" },
+    "payment": { "$ref": "#/$defs/payment" },
+    "target_payment": { "oneOf": [{ "$ref": "#/$defs/payment" }, { "type": "null" }] },
+    "chain": { "$ref": "#/$defs/chain" },
+    "remediation": { "type": "array", "items": { "type": "string" } },
+    "limitations": { "type": "array", "items": { "type": "string" } },
+    "challenge_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runs", "pass_count", "generation_time"],
+      "properties": {
+        "runs": { "type": "array", "items": { "type": "object" } },
+        "pass_count": { "type": "integer", "minimum": 0 },
+        "generation_time": { "type": "string", "format": "date-time" }
+      }
+    },
+    "receipt_url": { "type": "string", "format": "uri" }
   },
   "$defs": {
     "gate": { "enum": ["pass", "fail", "not_tested"] },
-    "hash": { "type": "string", "pattern": "^0x[0-9a-f]{64}$" }
+    "hash": { "type": "string", "pattern": "^0x[0-9a-fA-F]{64}$" },
+    "commit": { "type": "string", "pattern": "^[0-9a-fA-F]{40}$" },
+    "provider_declaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider_address", "manifest_hash", "signature", "verification_state"],
+      "properties": {
+        "provider_address": { "type": "string", "pattern": "^0x(?!0{40}$)[0-9a-fA-F]{40}$" },
+        "manifest_hash": { "$ref": "#/$defs/hash" },
+        "signature": { "type": ["string", "null"], "pattern": "^0x[0-9a-fA-F]{130}$" },
+        "verification_state": { "enum": ["verified", "not_provided", "invalid"] }
+      }
+    },
+    "payment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payment_id", "kind", "amount", "amount_atomic", "amount_display", "asset_decimals", "asset", "network", "payer", "recipient", "route", "settlement_transaction", "status", "timestamp"],
+      "properties": {
+        "payment_id": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["launchproof", "target"] },
+        "amount": { "type": "string", "pattern": "^[0-9]+$" },
+        "amount_atomic": { "type": "string", "pattern": "^[0-9]+$" },
+        "amount_display": { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?$" },
+        "asset_decimals": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "asset": { "type": "string", "pattern": "^0x(?!0{40}$)[0-9a-fA-F]{40}$" },
+        "network": { "type": "string", "pattern": "^eip155:[1-9][0-9]*$" },
+        "payer": { "oneOf": [{ "type": "string", "pattern": "^0x(?!0{40}$)[0-9a-fA-F]{40}$" }, { "type": "null" }] },
+        "recipient": { "oneOf": [{ "type": "string", "pattern": "^0x(?!0{40}$)[0-9a-fA-F]{40}$" }, { "type": "null" }] },
+        "route": { "type": "string", "minLength": 1 },
+        "settlement_transaction": { "oneOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
+        "status": { "enum": ["settled", "not_tested", "local_only"] },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    },
+    "chain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["registry_address", "evidence_transaction_hash", "block_number", "explorer_url", "published"],
+      "properties": {
+        "registry_address": { "type": "string", "pattern": "^0x[0-9a-fA-F]{40}$" },
+        "evidence_transaction_hash": { "type": "string", "pattern": "^0x[0-9a-fA-F]{64}$" },
+        "block_number": { "type": "string", "pattern": "^[0-9]+$" },
+        "explorer_url": { "oneOf": [{ "type": "string", "format": "uri" }, { "const": "" }] },
+        "published": { "type": "boolean" }
+      }
+    }
   }
 }

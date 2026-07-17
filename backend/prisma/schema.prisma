@@ -30,6 +30,10 @@ model Run {
   evidenceTransaction  String?
   evidenceBlock        String?
   error                String?
+  capacityLeaseExpiresAt DateTime?
+  publicationTransaction String?
+  publicationEvidenceHash String?
+  publicationStartedAt DateTime?
   createdAt            DateTime     @default(now())
   updatedAt            DateTime     @updatedAt
   invocations          Invocation[]
@@ -59,13 +63,17 @@ model Payment {
   payer                 String?
   recipient             String?
   amount                String
+  amountDisplay         String   @default("0")
+  assetDecimals         Int      @default(6)
   asset                 String
   network               String
   route                 String
-  settlementTransaction String?
+  settlementTransaction String?  @unique
   status                String
   createdAt             DateTime @default(now())
   run                   Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, kind])
 }
 
 model Provider {
@@ -90,4 +98,10 @@ model CampaignLog {
   publicUrl  String?
   evidence   Json
   consented  Boolean
+}
+
+model ChainCursor {
+  id        String   @id
+  block     String
+  updatedAt DateTime @updatedAt
 }

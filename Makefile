@@ -7,4 +7,4 @@ check:
 	pnpm check
 
 demo:
-	powershell -ExecutionPolicy Bypass -File scripts/demo.ps1
+	./scripts/demo.sh

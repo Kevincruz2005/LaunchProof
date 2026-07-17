@@ -2,11 +2,12 @@ import { randomBytes } from "node:crypto";
 import pLimit from "p-limit";
 import { verifyMessage } from "viem";
 import type { Config } from "../config.js";
-import { MAX_EVIDENCE_BYTES } from "../config.js";
+import { GENESIS_AMOUNT_ATOMIC, MAX_EVIDENCE_BYTES, RENEWAL_AMOUNT_ATOMIC } from "../config.js";
 import { evaluateAssertions, compareChallenge, overallClassification } from "../assertions/engine.js";
 import { generateChallenges, observedP95 } from "../challenges/generator.js";
 import type {
   CanonicalEvidence,
+  ChainReference,
   Gates,
   InvocationEvidence,
   PaymentReference,
@@ -15,12 +16,27 @@ import type {
 } from "../domain/types.js";
 import { passportStatus } from "../domain/gates.js";
 import { hashJcs, sha256, toJcs } from "../evidence/canonical.js";
-import { LaunchContractSchema, manifestSigningBody, type LaunchContract } from "../launch-contract/schema.js";
+import {
+  manifestSigningBody,
+  parseLaunchContract,
+  safeUseClaimsValid,
+  type LaunchContract,
+} from "../launch-contract/schema.js";
 import { fetchJson, ResponseLimitError } from "../security/safe-fetch.js";
-import { McpTargetClient, type ToolDescription } from "../mcp/target-client.js";
+import { McpTargetClient, SUPPORTED_MCP_PROTOCOL_VERSION, type ToolDescription } from "../mcp/target-client.js";
 import type { Repository, StoredRun } from "../db/store.js";
-import { RegistryService } from "../chain/registry.js";
+import {
+  PublicationOutcomeUnknownError,
+  RegistryService,
+  type EvidenceHashes,
+} from "../chain/registry.js";
 import { TargetPaymentService } from "../payments/target.js";
+import {
+  sanitizeEvidenceText,
+  sanitizeEvidenceValue,
+  sanitizeStructuredError,
+  sanitizeToolOutput,
+} from "../evidence/sanitize.js";
 
 const limitations = [
   "LaunchProof is not a security certification.",
@@ -29,14 +45,22 @@ const limitations = [
   "HTTPS and MCP execution occurred off-chain; the registry is a single-writer attestation registry, not a decentralized oracle.",
 ];
 
-function createRunId(publicRun: boolean): string {
+function createRunId(): string {
   return `0x${randomBytes(32).toString("hex")}`;
 }
 
 function manifestUrl(input: string): string {
   const url = new URL(input);
+  if (url.username || url.password || url.search || url.hash) {
+    throw new Error("Launch Contract URL credentials, query strings, and fragments are forbidden");
+  }
   if (url.pathname === "/" || url.pathname === "") url.pathname = "/.well-known/launch-contract.json";
   return url.toString();
+}
+
+function dailyCapacity(config: Pick<Config, "GLOBAL_RUN_LIMIT_PER_DAY">) {
+  const timestamp = new Date().toISOString();
+  return { since: `${timestamp.slice(0, 10)}T00:00:00.000Z`, limit: config.GLOBAL_RUN_LIMIT_PER_DAY };
 }
 
 function emptyInvocation(kind: InvocationEvidence["kind"], classification: InvocationEvidence["classification"]): InvocationEvidence {
@@ -54,13 +78,90 @@ function emptyInvocation(kind: InvocationEvidence["kind"], classification: Invoc
 }
 
 function safeError(error: unknown): string {
-  if (error instanceof ResponseLimitError) return error.message;
-  if (error instanceof Error) return error.message.replace(/0x[0-9a-fA-F]{64}/g, "[redacted]").slice(0, 500);
+  if (error instanceof ResponseLimitError) return sanitizeEvidenceText(error.message);
+  if (error instanceof Error) return sanitizeEvidenceText(error.message);
   return "Unknown rehearsal failure";
 }
 
 function isTimeout(error: { message: string } | null, latency: number, max: number): boolean {
   return latency >= max || Boolean(error && /timeout|timed out|abort/i.test(error.message));
+}
+
+function serverIdentity(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const input = value as Record<string, unknown>;
+  return {
+    name: typeof input.name === "string" ? input.name : null,
+    version: typeof input.version === "string" ? input.version : null,
+  };
+}
+
+interface SchemaRequirements {
+  required: string[];
+  anyOf: string[][];
+}
+
+function schemaRequirements(schema: Record<string, unknown>): SchemaRequirements {
+  let requiredFields: string[] = [];
+  if (Array.isArray(schema.required)) {
+    const fields = schema.required.filter((field): field is string => typeof field === "string");
+    if (fields.length > 0) requiredFields = fields;
+  }
+  const alternatives: string[][] = [];
+  if (Array.isArray(schema.anyOf)) {
+    for (const branch of schema.anyOf) {
+      if (!branch || typeof branch !== "object" || Array.isArray(branch)) continue;
+      const required = (branch as Record<string, unknown>).required;
+      if (!Array.isArray(required)) continue;
+      const fields = required.filter((field): field is string => typeof field === "string");
+      if (fields.length > 0) alternatives.push(fields);
+    }
+  }
+  return { required: requiredFields, anyOf: alternatives };
+}
+
+function schemaAcceptsInput(
+  schema: Record<string, unknown>,
+  input: Record<string, unknown>,
+  requirements: SchemaRequirements,
+): boolean {
+  const properties = schema.properties;
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) return false;
+  const propertyMap = properties as Record<string, unknown>;
+  if (!Object.entries(input).every(([field, value]) => propertyAcceptsValue(propertyMap[field], value))) return false;
+  const topLevelRequired = requirements.required.every((field) => Object.hasOwn(input, field));
+  const anyOfRequired = requirements.anyOf.length === 0 ||
+    requirements.anyOf.some((required) => required.every((field) => Object.hasOwn(input, field)));
+  return topLevelRequired && anyOfRequired;
+}
+
+export function schemaAcceptsBoundedInput(
+  schema: Record<string, unknown>,
+  input: Record<string, unknown>,
+): boolean {
+  return schemaAcceptsInput(schema, input, schemaRequirements(schema));
+}
+
+function propertyAcceptsValue(property: unknown, value: unknown): boolean {
+  if (!property || typeof property !== "object" || Array.isArray(property)) return false;
+  const definition = property as { type?: unknown; maxLength?: unknown; maximum?: unknown; minimum?: unknown };
+  if (definition.type === "string") {
+    return typeof value === "string" &&
+      typeof definition.maxLength === "number" &&
+      Number.isInteger(definition.maxLength) &&
+      definition.maxLength > 0 &&
+      definition.maxLength <= 5_000 &&
+      value.length <= definition.maxLength;
+  }
+  if (definition.type === "integer") return typeof value === "number" && Number.isInteger(value) && numericBoundsAccept(definition, value);
+  if (definition.type === "number") return typeof value === "number" && Number.isFinite(value) && numericBoundsAccept(definition, value);
+  if (definition.type === "boolean") return typeof value === "boolean";
+  return false;
+}
+
+function numericBoundsAccept(definition: { minimum?: unknown; maximum?: unknown }, value: number): boolean {
+  return (typeof definition.minimum !== "number" || value >= definition.minimum) &&
+    (typeof definition.maximum !== "number" || value <= definition.maximum);
 }
 
 function deterministicRemediation(
@@ -103,49 +204,139 @@ export class RehearsalService {
   }
 
   async start(request: RehearsalRequest, waitForCompletion: boolean): Promise<StoredRun> {
-    const reserved = await this.reserve(request.url, request.idempotency_key);
+    const reserved = await this.reserve(
+      request.url,
+      request.idempotency_key,
+      request.previous_run_id ? "renewal" : "genesis",
+      request.previous_run_id ?? null,
+    );
     if ("canonical_evidence" in reserved || reserved.state !== "payment_required") return reserved;
     return this.runReserved(reserved.run_id, request, waitForCompletion);
   }
 
-  async reserve(url: string, idempotencyKey: string): Promise<StoredRun> {
+  async reserve(
+    url: string,
+    idempotencyKey: string,
+    operation: "genesis" | "renewal" = "genesis",
+    previousRunId: string | null = null,
+  ): Promise<StoredRun> {
+    const target = manifestUrl(url);
     const existing = await this.repository.getByIdempotencyKey(idempotencyKey);
-    if (existing) return existing;
-    const runId = createRunId(this.config.productionReady);
+    if (existing) {
+      this.assertIdempotencySemantics(existing, target, operation, previousRunId);
+      return existing;
+    }
+    const runId = createRunId();
     const timestamp = new Date().toISOString();
-    return this.repository.createProgress({
+    const stored = await this.repository.createProgress({
       run_id: runId,
       idempotency_key: idempotencyKey,
       state: "payment_required",
-      target: url,
+      target,
+      operation,
+      previous_run_id: previousRunId,
+      payment: null,
       created_at: timestamp,
       updated_at: timestamp,
       error: null,
     });
+    this.assertIdempotencySemantics(stored, target, operation, previousRunId);
+    return stored;
   }
 
   async runReserved(runId: string, request: RehearsalRequest, waitForCompletion: boolean): Promise<StoredRun> {
     if (this.active.has(runId)) return (await this.repository.getRun(runId))!;
     this.active.add(runId);
-    await this.repository.updateState(runId, "payment_settled");
-    await this.repository.updateState(runId, "queued");
-    const task = this.limiter(() => this.execute(runId, request)).finally(() => this.active.delete(runId));
-    if (waitForCompletion) {
-      await task;
+    try {
+      this.validateLaunchPayment(request);
+      await this.repository.authorizeRun(request.payment, runId, dailyCapacity(this.config));
+      await this.repository.updateState(runId, "queued");
+      const task = this.limiter(() => this.execute(runId, request)).finally(() => this.active.delete(runId));
+      if (waitForCompletion) {
+        await task;
+        return (await this.repository.getRun(runId))!;
+      }
+      void task.catch(() => undefined);
       return (await this.repository.getRun(runId))!;
+    } catch (error) {
+      this.active.delete(runId);
+      throw error;
     }
-    void task.catch(() => undefined);
-    return (await this.repository.getRun(runId))!;
+  }
+
+  async recoverPendingRuns(): Promise<number> {
+    const runs = await this.repository.recoverableRuns();
+    let recovered = 0;
+    for (const run of runs) {
+      if (!run.payment) continue;
+      await this.runReserved(
+        run.run_id,
+        {
+          url: run.target,
+          idempotency_key: run.idempotency_key,
+          payment: run.payment,
+          ...(run.previous_run_id ? { previous_run_id: run.previous_run_id } : {}),
+        },
+        true,
+      );
+      recovered += 1;
+    }
+    return recovered;
+  }
+
+  private assertIdempotencySemantics(
+    stored: StoredRun,
+    target: string,
+    operation: "genesis" | "renewal",
+    previousRunId: string | null,
+  ): void {
+    const existingTarget = "canonical_evidence" in stored ? stored.canonical_evidence.target : stored.target;
+    const existingPrevious = "canonical_evidence" in stored ? stored.previous_run_id : stored.previous_run_id;
+    const existingOperation = "canonical_evidence" in stored
+      ? (stored.previous_run_id ? "renewal" : "genesis")
+      : stored.operation;
+    if (existingTarget !== target || existingOperation !== operation || existingPrevious !== previousRunId) {
+      throw new Error("Idempotency key is already bound to a different target, operation, or renewal lineage");
+    }
+  }
+
+  private validateLaunchPayment(request: RehearsalRequest): void {
+    if (request.payment.kind !== "launchproof") throw new Error("Run authorization must be a LaunchProof payment");
+    if (request.payment.network !== this.config.chain.network) throw new Error("LaunchProof payment network does not match the active chain");
+    if (request.payment.asset.toLowerCase() !== this.config.chain.usdt0Address.toLowerCase()) {
+      throw new Error("LaunchProof payment asset does not match the active chain");
+    }
+    const expectedAmount = request.previous_run_id ? RENEWAL_AMOUNT_ATOMIC : GENESIS_AMOUNT_ATOMIC;
+    if (request.payment.amount_atomic !== expectedAmount || request.payment.amount !== expectedAmount) {
+      throw new Error("LaunchProof payment amount does not match the requested operation");
+    }
+    if (this.config.X402_ENABLED) {
+      if (request.payment.status !== "settled" || !request.payment.settlement_transaction) {
+        throw new Error("A final on-chain x402 settlement is required");
+      }
+      if (!this.config.PAYOUT_ADDRESS || request.payment.recipient?.toLowerCase() !== this.config.PAYOUT_ADDRESS.toLowerCase()) {
+        throw new Error("LaunchProof payment recipient does not match the configured payout wallet");
+      }
+      return;
+    }
+    if (!this.config.ALLOW_LOCAL_UNPAID_RUNS || request.payment.status !== "local_only") {
+      throw new Error("Local unpaid execution is not authorized");
+    }
   }
 
   private async execute(runId: string, request: RehearsalRequest): Promise<void> {
     const runStarted = performance.now();
     let manifest: LaunchContract | null = null;
+    let targetPayment: PaymentReference | null = null;
+    let paidDeliveryEvidence: InvocationEvidence | null = null;
     let declarationState: "verified" | "not_provided" | "invalid" = "not_provided";
     try {
       await this.repository.updateState(runId, "fetching_contract");
       const raw = await fetchJson<unknown>(manifestUrl(request.url), this.config);
-      manifest = LaunchContractSchema.parse(raw);
+      manifest = parseLaunchContract(raw, this.config);
+      if (Buffer.byteLength(toJcs(manifest)) > 24_576) {
+        throw new Error("Launch Contract exceeds the bounded evidence profile");
+      }
       const manifestHash = hashJcs(manifestSigningBody(manifest));
       if (manifest.declaration_signature) {
         const valid = await verifyMessage({
@@ -162,10 +353,28 @@ export class RehearsalService {
       if (manifest.payment && new URL(manifest.payment.resource_url).hostname.toLowerCase() !== sourceOrigin) {
         throw new Error("Paid resource must use the same consenting provider hostname");
       }
+      const fixtureVariant = this.trustedFixtureVariant(request.url, manifest);
+      if (manifest.fixture && !fixtureVariant) {
+        throw new Error("Untrusted provider cannot self-assert the LaunchProof fixture label");
+      }
+      if (fixtureVariant && declarationState !== "verified") {
+        throw new Error("Configured fixture requires a valid provider declaration signature");
+      }
+      if (fixtureVariant && manifest.source_revision.toLowerCase() !== this.config.BUILD_COMMIT_SHA.toLowerCase()) {
+        throw new Error("Trusted fixture source_revision must equal the running LaunchProof build commit");
+      }
 
       if (request.previous_run_id) {
         const previous = await this.repository.getRun(request.previous_run_id);
         if (!previous || !("canonical_evidence" in previous)) throw new Error("Renewal previous_run_id was not found");
+        if (
+          previous.canonical_evidence.target !== manifestUrl(request.url) ||
+          previous.provider_declaration.provider_address.toLowerCase() !== manifest.provider_address.toLowerCase() ||
+          previous.canonical_evidence.manifest.service_name !== manifest.service_name ||
+          previous.canonical_evidence.manifest.tool !== manifest.tool
+        ) {
+          throw new Error("Renewal must preserve target, provider, service, and tool identity");
+        }
         if (previous.manifest_hash === manifestHash && previous.source_version_sha === manifest.source_revision) {
           throw new Error("Renewal requires a changed manifest or source revision");
         }
@@ -175,7 +384,7 @@ export class RehearsalService {
         discoverable: "not_tested",
         contract_correct: "not_tested",
         fresh_challenge: "not_tested",
-        safe_to_rehearse: "pass",
+        safe_to_rehearse: "not_tested",
         paid_delivery: "not_tested",
       };
       const client = new McpTargetClient(manifest.mcp_endpoint, this.config, manifest.max_latency_ms, runStarted + 30_000);
@@ -186,17 +395,43 @@ export class RehearsalService {
       const initialization = await client.initialize();
       const tools = await client.listTools();
       const declaredTool = tools.find((tool) => tool.name === manifest!.tool);
-      gates.discoverable = declaredTool && this.schemaMatches(declaredTool, manifest) ? "pass" : "fail";
+      const toolsCapability = initialization.protocolVersion === SUPPORTED_MCP_PROTOCOL_VERSION &&
+        Boolean(initialization.capabilities.tools);
+      const schemaMatches = Boolean(declaredTool && this.schemaMatches(declaredTool, manifest));
+      gates.discoverable = toolsCapability && schemaMatches ? "pass" : "fail";
+      const discovery = {
+        protocol_version: typeof initialization.protocolVersion === "string"
+          ? sanitizeEvidenceText(initialization.protocolVersion)
+          : null,
+        server_info: sanitizeEvidenceValue(serverIdentity(initialization.serverInfo)),
+        server_capabilities: sanitizeEvidenceValue(initialization.capabilities),
+        declared_tool: declaredTool
+          ? {
+              name: declaredTool.name,
+              description: declaredTool.description ? sanitizeEvidenceText(declaredTool.description) : null,
+              input_schema: declaredTool.inputSchema,
+              input_schema_hash: hashJcs(declaredTool.inputSchema),
+            }
+          : null,
+        tools_capability: toolsCapability,
+        schema_matches: schemaMatches,
+      };
 
       await this.repository.updateState(runId, "fixed_sample");
       const fixedStarted = performance.now();
       const fixedResult = await client.callTool(manifest.tool, manifest.sample_input);
       const fixedLatency = Math.round(performance.now() - fixedStarted);
       latencies.push(fixedLatency);
-      const fixedComparisons = fixedResult.output ? evaluateAssertions(fixedResult.output, manifest.assertions) : [];
+      const evidenceFields = [
+        ...manifest.assertions.map((assertion) => assertion.path.slice(2)),
+        ...manifest.challenge_profile.output_fields,
+      ];
+      const fixedOutput = sanitizeToolOutput(fixedResult.output, evidenceFields);
+      const fixedError = sanitizeStructuredError(fixedResult.structuredError);
+      const fixedComparisons = fixedOutput ? evaluateAssertions(fixedOutput, manifest.assertions) : [];
       const fixedClassification = isTimeout(fixedResult.structuredError, fixedLatency, manifest.max_latency_ms)
         ? "timeout"
-        : fixedResult.output
+        : fixedOutput
           ? overallClassification(fixedComparisons)
           : "schema_drift";
       const fixed: InvocationEvidence = {
@@ -204,9 +439,9 @@ export class RehearsalService {
         index: 0,
         input: manifest.sample_input,
         expected: Object.fromEntries(manifest.assertions.map((item) => [item.path.slice(2), item.value])),
-        output: fixedResult.output,
+        output: fixedOutput,
         comparisons: fixedComparisons,
-        structured_error: fixedResult.structuredError,
+        structured_error: fixedError,
         latency_ms: fixedLatency,
         classification: fixedClassification,
       };
@@ -218,9 +453,14 @@ export class RehearsalService {
       const invalidResult = await client.callTool(manifest.tool, controlledInvalidInput);
       const invalidLatency = Math.round(performance.now() - invalidStarted);
       latencies.push(invalidLatency);
-      const message = invalidResult.structuredError?.message ?? "";
+      const invalidError = sanitizeStructuredError(invalidResult.structuredError);
+      const invalidOutput = sanitizeToolOutput(invalidResult.output, evidenceFields);
+      const message = invalidError?.message ?? "";
       const safeStructuredFailure = Boolean(
-        invalidResult.structuredError &&
+        invalidError &&
+          invalidError.code === "TOOL_ERROR" &&
+          !invalidOutput &&
+          !isTimeout(invalidError, invalidLatency, manifest.max_latency_ms) &&
           message.length <= 500 &&
           !/stack|trace|secret|private[_ -]?key|api[_ -]?key|bearer\s/i.test(message),
       );
@@ -229,15 +469,24 @@ export class RehearsalService {
         index: 0,
         input: controlledInvalidInput,
         expected: null,
-        output: invalidResult.output,
+        output: invalidOutput,
         comparisons: [],
-        structured_error: invalidResult.structuredError,
+        structured_error: invalidError,
         latency_ms: invalidLatency,
         classification: safeStructuredFailure ? null : "unsafe_error",
       };
       allInvocations.push(invalid);
       gates.contract_correct =
-        fixedComparisons.length > 0 && fixedComparisons.every((item) => item.match) && safeStructuredFailure ? "pass" : "fail";
+        fixedClassification === null &&
+        fixedComparisons.length > 0 &&
+        fixedComparisons.every((item) => item.match) &&
+        safeStructuredFailure
+          ? "pass"
+          : "fail";
+      gates.safe_to_rehearse =
+        gates.discoverable === "pass" && this.safeUseDeclared(manifest) && safeStructuredFailure
+          ? "pass"
+          : "fail";
 
       await this.repository.updateState(runId, "fresh_challenges");
       const generatedAt = new Date().toISOString();
@@ -247,12 +496,14 @@ export class RehearsalService {
         const result = await client.callTool(manifest.tool, challenge.input);
         const latency = Math.round(performance.now() - started);
         latencies.push(latency);
-        const comparisons = result.output
-          ? compareChallenge(challenge.expected, result.output, manifest.challenge_profile.output_fields)
+        const output = sanitizeToolOutput(result.output, manifest.challenge_profile.output_fields);
+        const structuredError = sanitizeStructuredError(result.structuredError);
+        const comparisons = output
+          ? compareChallenge(challenge.expected, output, manifest.challenge_profile.output_fields)
           : [];
         const classification = isTimeout(result.structuredError, latency, manifest.challenge_profile.max_latency_ms_per_run)
           ? "timeout"
-          : result.output
+          : output
             ? overallClassification(comparisons)
             : "schema_drift";
         allInvocations.push({
@@ -260,9 +511,9 @@ export class RehearsalService {
           index,
           input: challenge.input,
           expected: challenge.expected,
-          output: result.output,
+          output,
           comparisons,
-          structured_error: result.structuredError,
+          structured_error: structuredError,
           latency_ms: latency,
           classification,
         });
@@ -274,13 +525,19 @@ export class RehearsalService {
           ? "pass"
           : "fail";
 
+      if (Buffer.byteLength(toJcs({ manifest, discovery, invocations: allInvocations })) > 49_152) {
+        throw new Error("Bounded rehearsal evidence would exceed the on-chain profile");
+      }
+
       await this.repository.updateState(runId, "target_payment_or_not_tested");
-      let targetPayment: PaymentReference | null = null;
       if (manifest.payment_mode === "x402_optional") {
         try {
+          if (request.payment.status !== "settled") throw new Error("Paid target delivery requires a settled LaunchProof authorization");
           if (declarationState !== "verified") throw new Error("Paid target delivery requires a verified provider declaration");
           const paidDelivery = await this.targetPayments.pay(manifest, runId);
           targetPayment = paidDelivery.payment;
+          paidDeliveryEvidence = paidDelivery.evidence;
+          latencies.push(paidDelivery.evidence.latency_ms);
           gates.paid_delivery = paidDelivery.deliveryMatches ? "pass" : "fail";
         } catch {
           gates.paid_delivery = "fail";
@@ -298,19 +555,16 @@ export class RehearsalService {
         schema_version: "1.0",
         run_id: runId,
         target: manifestUrl(request.url),
-        label: this.config.productionReady ? (manifest.fixture ? "fixture" : "production") : "local_only",
+        label: fixtureVariant && declarationState === "verified" ? "fixture" : "external",
+        network: this.config.chain.network,
+        execution_mode: request.payment.status === "settled" && this.config.chainReady ? "testnet" : "local",
         generated_at: generated,
         manifest,
-        discovery: {
-          protocol_version: initialization.protocolVersion ?? null,
-          server_info: initialization.serverInfo ?? null,
-          declared_tool: declaredTool
-            ? { name: declaredTool.name, description: declaredTool.description ?? null, inputSchema: declaredTool.inputSchema }
-            : null,
-        },
+        discovery,
         fixed_sample: fixed,
         invalid_input: invalid,
         challenges: challengeInvocations,
+        paid_delivery: paidDeliveryEvidence,
         timings: { invocation_ms: latencies, total_ms: totalMs, observed_p95_ms: observedP95(latencies) },
         gates,
         passport_status: status,
@@ -322,8 +576,8 @@ export class RehearsalService {
         },
         payments: { launchproof: request.payment, target: targetPayment },
         hash_material: {
-          inputs: [fixed.input, invalid.input, ...challengeInvocations.map((item) => item.input)],
-          normalized_comparisons: normalizedComparisons,
+          inputs: [fixed.input, invalid.input, ...challengeInvocations.map((item) => item.input), ...paidDeliveryEvidence ? [paidDeliveryEvidence.input] : []],
+          normalized_comparisons: [...normalizedComparisons, ...(paidDeliveryEvidence?.comparisons ?? [])],
         },
         source_revision: manifest.source_revision,
         build_commit: this.config.BUILD_COMMIT_SHA,
@@ -340,62 +594,99 @@ export class RehearsalService {
         normalizedResultHash: hashJcs(evidence.hash_material.normalized_comparisons),
       };
       await this.repository.updateState(runId, "publishing_on_chain");
-      const chain = await this.registry.publish(evidence, hashes);
-      if (this.config.productionReady && !chain.published) throw new Error("Production run was not published on chain");
-      const record: RunRecord = {
-        run_id: runId,
-        idempotency_key: request.idempotency_key,
+      const chain = await this.registry.publish(evidence, hashes, async (transactionHash) => {
+        const candidate = runRecordFromEvidence({
+          runId,
+          idempotencyKey: request.idempotency_key,
+          evidence,
+          canonical,
+          hashes,
+          state: "publishing_on_chain",
+          chain: pendingChain(this.config, transactionHash),
+        });
+        await this.repository.recordPublicationAttempt(runId, {
+          transaction_hash: transactionHash,
+          evidence_hash: hashes.evidenceHash,
+          started_at: new Date().toISOString(),
+          candidate,
+        });
+      });
+      if (request.payment.status === "settled" && this.config.chainReady && !chain.published) {
+        throw new Error("Chain-ready settled run was not published on chain");
+      }
+      const record = runRecordFromEvidence({
+        runId,
+        idempotencyKey: request.idempotency_key,
+        evidence,
+        canonical,
+        hashes,
         state: chain.published ? "complete" : "complete_local",
-        previous_run_id: request.previous_run_id ?? null,
-        label: evidence.label,
-        scope: "structured-extraction-v1 only",
-        passport_status: status,
-        gates,
-        canonical_evidence: evidence,
-        canonical_evidence_jcs: canonical,
-        evidence_hash: hashes.evidenceHash,
-        manifest_hash: hashes.manifestHash,
-        input_hash: hashes.inputHash,
-        normalized_result_hash: hashes.normalizedResultHash,
-        source_version_sha: manifest.source_revision,
-        build_commit_sha: this.config.BUILD_COMMIT_SHA,
-        generated_at: generated,
-        provider_declaration: evidence.provider_declaration,
-        payment: request.payment,
-        target_payment: targetPayment,
         chain,
-        remediation,
-        limitations,
-      };
+      });
       await this.repository.saveRun(record);
       await this.repository.savePayment(request.payment, runId);
       if (targetPayment) await this.repository.savePayment(targetPayment, runId);
     } catch (error) {
       const message = safeError(error);
+      if (error instanceof PublicationOutcomeUnknownError) {
+        await this.repository.updateState(runId, "publishing_on_chain", message);
+        throw error;
+      }
       await this.repository.updateState(runId, "failed", message);
-      if (manifest) await this.publishNotRehearsable(runId, request, manifest, declarationState, message).catch(() => undefined);
+      if (manifest) {
+        targetPayment ??= await this.repository.getTargetPaymentForRun(runId).catch(() => null);
+        await this.publishNotRehearsable(runId, request, manifest, declarationState, message, targetPayment).catch(() => undefined);
+      }
       throw error;
     }
   }
 
   private schemaMatches(tool: ToolDescription, manifest: LaunchContract): boolean {
+    if (tool.inputSchema.type !== "object" || tool.inputSchema.additionalProperties !== false) return false;
     const properties = tool.inputSchema.properties;
     if (!properties || typeof properties !== "object" || Array.isArray(properties)) return false;
-    const fields = new Set(Object.keys(properties));
-    return (
-      Object.keys(manifest.sample_input).every((field) => fields.has(field)) &&
-      fields.has(manifest.challenge_profile.input_field)
-    );
+    const requirements = schemaRequirements(tool.inputSchema);
+    if (requirements.required.length === 0 && requirements.anyOf.length === 0) return false;
+    return schemaAcceptsBoundedInput(tool.inputSchema, manifest.sample_input) &&
+      schemaAcceptsBoundedInput(tool.inputSchema, {
+        [manifest.challenge_profile.input_field]: "Synthetic bounded invoice",
+      });
   }
 
   private invalidInput(tool: ToolDescription | undefined, sample: Record<string, unknown>): Record<string, unknown> {
     const invalid = structuredClone(sample);
-    const required = Array.isArray(tool?.inputSchema.required)
-      ? tool.inputSchema.required.filter((field): field is string => typeof field === "string")
-      : [];
-    const omitted = required.find((field) => Object.hasOwn(invalid, field)) ?? Object.keys(invalid)[0];
-    if (omitted) delete invalid[omitted];
+    if (!tool) {
+      const first = Object.keys(invalid)[0];
+      if (first) delete invalid[first];
+      return invalid;
+    }
+    const requirements = schemaRequirements(tool.inputSchema);
+    for (const field of Object.keys(invalid)) {
+      const candidate = structuredClone(invalid);
+      delete candidate[field];
+      if (!schemaAcceptsInput(tool.inputSchema, candidate, requirements)) return candidate;
+    }
+    const first = Object.keys(invalid)[0];
+    if (first) delete invalid[first];
     return invalid;
+  }
+
+  private safeUseDeclared(manifest: LaunchContract): boolean {
+    return safeUseClaimsValid(manifest.safe_use) &&
+      manifest.mode === "sample_only" &&
+      manifest.challenge_profile.safe_mode === "synthetic_read_only";
+  }
+
+  private trustedFixtureVariant(requestUrl: string, manifest: LaunchContract): string | null {
+    for (const [variant, configuredUrl] of Object.entries(this.config.fixtureUrls)) {
+      const provider = this.config.fixtureAddresses[variant as keyof Config["fixtureAddresses"]];
+      if (!configuredUrl || !provider) continue;
+      if (
+        manifestUrl(configuredUrl) === manifestUrl(requestUrl) &&
+        provider.toLowerCase() === manifest.provider_address.toLowerCase()
+      ) return variant;
+    }
+    return null;
   }
 
   private async publishNotRehearsable(
@@ -404,12 +695,13 @@ export class RehearsalService {
     manifest: LaunchContract,
     declarationState: "verified" | "not_provided" | "invalid",
     reason: string,
+    targetPayment: PaymentReference | null,
   ) {
     const gates: Gates = {
       discoverable: "not_tested",
       contract_correct: "not_tested",
       fresh_challenge: "not_tested",
-      safe_to_rehearse: "pass",
+      safe_to_rehearse: "not_tested",
       paid_delivery: "not_tested",
     };
     const manifestHash = hashJcs(manifestSigningBody(manifest));
@@ -420,13 +712,16 @@ export class RehearsalService {
       schema_version: "1.0",
       run_id: runId,
       target: manifestUrl(request.url),
-      label: this.config.productionReady ? (manifest.fixture ? "fixture" : "production") : "local_only",
+      label: this.trustedFixtureVariant(request.url, manifest) && declarationState === "verified" ? "fixture" : "external",
+      network: this.config.chain.network,
+      execution_mode: request.payment.status === "settled" && this.config.chainReady ? "testnet" : "local",
       generated_at: generated,
       manifest,
-      discovery: { infrastructure_error: reason },
+      discovery: { infrastructure_error: sanitizeEvidenceText(reason) },
       fixed_sample: placeholder,
       invalid_input: invalid,
       challenges: [],
+      paid_delivery: null,
       timings: { invocation_ms: [], total_ms: 0, observed_p95_ms: 0 },
       gates,
       passport_status: "not-rehearsable",
@@ -436,7 +731,7 @@ export class RehearsalService {
         signature: manifest.declaration_signature ?? null,
         verification_state: declarationState,
       },
-      payments: { launchproof: request.payment, target: null },
+      payments: { launchproof: request.payment, target: targetPayment },
       hash_material: { inputs: [], normalized_comparisons: [] },
       source_revision: manifest.source_revision,
       build_commit: this.config.BUILD_COMMIT_SHA,
@@ -452,33 +747,80 @@ export class RehearsalService {
       inputHash: hashJcs([]),
       normalizedResultHash: hashJcs([]),
     };
-    const chain = await this.registry.publish(evidence, hashes);
-    if (!chain.published) return;
-    await this.repository.saveRun({
-      run_id: runId,
-      idempotency_key: request.idempotency_key,
-      state: "complete",
-      previous_run_id: request.previous_run_id ?? null,
-      label: evidence.label,
-      scope: "structured-extraction-v1 only",
-      passport_status: "not-rehearsable",
-      gates,
-      canonical_evidence: evidence,
-      canonical_evidence_jcs: canonical,
-      evidence_hash: hashes.evidenceHash,
-      manifest_hash: hashes.manifestHash,
-      input_hash: hashes.inputHash,
-      normalized_result_hash: hashes.normalizedResultHash,
-      source_version_sha: manifest.source_revision,
-      build_commit_sha: this.config.BUILD_COMMIT_SHA,
-      generated_at: generated,
-      provider_declaration: evidence.provider_declaration,
-      payment: request.payment,
-      target_payment: null,
-      chain,
-      remediation: evidence.remediation,
-      limitations,
+    const chain = await this.registry.publish(evidence, hashes, async (transactionHash) => {
+      const candidate = runRecordFromEvidence({
+        runId,
+        idempotencyKey: request.idempotency_key,
+        evidence,
+        canonical,
+        hashes,
+        state: "publishing_on_chain",
+        chain: pendingChain(this.config, transactionHash),
+      });
+      await this.repository.recordPublicationAttempt(runId, {
+        transaction_hash: transactionHash,
+        evidence_hash: hashes.evidenceHash,
+        started_at: new Date().toISOString(),
+        candidate,
+      });
     });
+    if (!chain.published) return;
+    await this.repository.saveRun(runRecordFromEvidence({
+      runId,
+      idempotencyKey: request.idempotency_key,
+      evidence,
+      canonical,
+      hashes,
+      state: "complete",
+      chain,
+    }));
     await this.repository.savePayment(request.payment, runId);
+    if (targetPayment) await this.repository.savePayment(targetPayment, runId);
   }
+}
+
+function runRecordFromEvidence(input: {
+  runId: string;
+  idempotencyKey: string;
+  evidence: CanonicalEvidence;
+  canonical: string;
+  hashes: EvidenceHashes;
+  state: RunRecord["state"];
+  chain: ChainReference;
+}): RunRecord {
+  return {
+    run_id: input.runId,
+    idempotency_key: input.idempotencyKey,
+    state: input.state,
+    previous_run_id: input.evidence.previous_run_id,
+    label: input.evidence.label,
+    scope: "structured-extraction-v1 only",
+    passport_status: input.evidence.passport_status,
+    gates: input.evidence.gates,
+    canonical_evidence: input.evidence,
+    canonical_evidence_jcs: input.canonical,
+    evidence_hash: input.hashes.evidenceHash,
+    manifest_hash: input.hashes.manifestHash,
+    input_hash: input.hashes.inputHash,
+    normalized_result_hash: input.hashes.normalizedResultHash,
+    source_version_sha: input.evidence.source_revision,
+    build_commit_sha: input.evidence.build_commit,
+    generated_at: input.evidence.generated_at,
+    provider_declaration: input.evidence.provider_declaration,
+    payment: input.evidence.payments.launchproof,
+    target_payment: input.evidence.payments.target,
+    chain: input.chain,
+    remediation: input.evidence.remediation,
+    limitations: input.evidence.limitations,
+  };
+}
+
+function pendingChain(config: Config, transactionHash: `0x${string}`): ChainReference {
+  return {
+    registry_address: config.REGISTRY_ADDRESS ?? "0x0000000000000000000000000000000000000000",
+    evidence_transaction_hash: transactionHash,
+    block_number: "0",
+    explorer_url: `${config.chain.explorerUrl}/tx/${transactionHash}`,
+    published: false,
+  };
 }

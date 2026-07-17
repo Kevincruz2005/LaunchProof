@@ -1,101 +1,96 @@
 # LaunchProof
 
-[![CI](https://github.com/your-org/launchproof/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/launchproof/actions/workflows/ci.yml)
+[![CI](https://github.com/Kevincruz2005/LaunchProof/actions/workflows/ci.yml/badge.svg)](https://github.com/Kevincruz2005/LaunchProof/actions/workflows/ci.yml)
 
-> **Problem:** a marketplace cannot route paid agent work confidently when listed tools silently fail, drift from their declared schema, or return unusable output.  
-> **User:** an ASP builder before listing, and an agent buyer deciding whether to call a paid service.  
-> **Product:** LaunchProof performs a bounded, paid MCP rehearsal and returns a shareable Service Passport with reproducible evidence.  
-> **What is implemented now:** public MCP discovery, contract checks, valid/invalid synthetic calls, timeout handling, evidence publication, and official x402 payment paths; real mainnet proof remains pending deployment credentials.  
-> **Why OKX.AI:** A2MCP turns the quality check into a billable agent service; the Passport improves confidence in services buyers discover and pay for on the marketplace.  
-> **How to verify:** visit the project card, call the documented fixture, inspect `/runs/{runId}`, and verify the evidence directly against X Layer.
+LaunchProof performs a bounded MCP service rehearsal, settles the configured OKX x402 test payments, and publishes canonical evidence to an immutable registry on X Layer testnet. The result is a Service Passport whose evidence, manifest, input, normalized-result, payment-receipt, and source-revision hashes can be recomputed independently.
 
-LaunchProof rehearses an agent service's advertised paid task and gives buyers a versioned Service Passport before they pay for the real job. The implementation is ready for deployment, but this repository intentionally contains no fabricated mainnet address, payment, listing, or Passport. Fill the production values below only after their corresponding transactions and deployments exist.
+This repository is testnet-first and fail-closed:
 
-| Public fact | Value |
-|---|---|
-| API | Not deployed yet |
-| Web app | Not deployed yet |
-| Genesis Launch Rehearsal | `0.01 USDT0` through a fixed OKX x402 route |
-| Renew Passport | `0.10 USDT0` through a separate fixed OKX x402 route |
-| X Layer registry | Not deployed yet |
-| Deployed source commit | Not deployed yet |
-| Network | X Layer mainnet, `eip155:196` |
+- The supported public profile is X Layer testnet `eip155:1952` with the official test USD₮0 contract.
+- RPCs, token, registry, deployment block, deployed runtime-code hash, writer, fixture URLs, and provider identities come from validated environment configuration.
+- A Passport is `verified` only when all five gates pass, including real paid delivery.
+- Unpaid or private executions record `execution_mode=local` and local payment status; the provenance label remains `fixture` or `external`, and such runs cannot be presented as verified public evidence.
+- The repository contains no deployer, registry-writer, payer, payout, fixture, facilitator, or tunnel credential.
 
-## 60-second verification
+The official OKX documentation lists X Layer testnet and test USD₮0 support in its [x402 seller SDK](https://web3.okx.com/onchainos/dev-docs/payments/service-seller-sdk) and [buyer integration](https://web3.okx.com/onchainos/dev-docs/payments/payment-use-buyer) guides.
 
-After the production values are configured:
+## Start here
+
+Read the [complete project and implementation guide](./docs/PROJECT_IMPLEMENTATION.md) for the architecture, trust model, payment/evidence design, recovery behavior, verification model, test results, and current deployment readiness. Follow [setup.md](./setup.md) from a clean clone for the command-by-command operator runbook. It covers fresh key generation, testnet funding, registry deployment, read-only deployment verification, four explicitly configured fixtures, x402 setup, PostgreSQL, application startup, and end-to-end verification.
 
 ```bash
-curl "$PUBLIC_API_BASE_URL/.well-known/launchproof.json"
-curl "$PUBLIC_API_BASE_URL/runs/$RUN_ID"
-curl "$PUBLIC_API_BASE_URL/verify/$RUN_ID"
-./scripts/verify-run.sh "$RUN_ID"
+git clone https://github.com/Kevincruz2005/LaunchProof.git
+cd LaunchProof
+corepack enable
+corepack prepare pnpm@10.13.1 --activate
+pnpm install --frozen-lockfile
+cp .env.example .env
 ```
 
-The verification endpoint reads the registry and `RunPublished` log from X Layer, recomputes the manifest, input, normalized-result, and evidence hashes, then reports a database-cache mismatch separately. The cache cannot make chain verification pass.
+Do not reuse any key or OKX credential that has appeared in source control, logs, chat, screenshots, or a demo recording. `pnpm keys:testnet` creates unique local secrets in ignored mode-0600 files and prints only public addresses.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    Buyer["Buyer or ASP provider"] --> UI["Independent Next.js frontend"]
-    Agent["OKX.AI agent"] --> MCP["MCP Streamable HTTP"]
-    UI --> REST["Express REST API"]
-    MCP --> Pay["Official OKX x402 middleware"]
-    REST --> Pay
-    Pay --> Runner["Bounded rehearsal worker"]
-    Runner --> Manifest["Provider Launch Contract"]
-    Runner --> Target["Public MCP target"]
-    Runner --> Registry["LaunchProofRegistry on X Layer"]
-    Registry --> Logs["Canonical evidence logs"]
-    Runner --> Cache["PostgreSQL index/cache"]
+    Buyer["Testnet buyer wallet"] --> UI["Next.js frontend"]
+    Agent["MCP client"] --> API["Express REST and MCP API"]
+    UI --> API
+    API --> Pay["OKX x402 facilitator"]
+    Pay --> Worker["Bounded rehearsal worker"]
+    Worker --> Contract["Signed Launch Contract"]
+    Worker --> Target["Public MCP fixture or service"]
+    Worker --> Registry["LaunchProofRegistry · X Layer testnet"]
+    Registry --> Evidence["Canonical evidence and hashes"]
+    Worker --> Cache["PostgreSQL index/cache"]
     UI --> Registry
 ```
 
-The frontend and backend never import one another. They build and deploy separately and share only the versioned files in [`schema/`](./schema). Four fixtures are separately deployable services under [`fixtures/`](./fixtures).
+The frontend and backend build separately and share the versioned files in [`schema/`](./schema). The four services in [`fixtures/`](./fixtures) are controlled, signed fixtures with distinct keys and explicit URLs; they are never inferred from a shared base domain.
 
-## What a run does
+## What a run proves
 
-1. Fetch and validate a provider's public HTTPS `/.well-known/launch-contract.json` with DNS pinning and redirect revalidation.
-2. Verify an optional EIP-191 declaration over the RFC 8785 canonical manifest hash.
-3. Perform MCP initialize and tools/list, then check the declared tool and relevant input fields.
-4. Execute one fixed sample and one controlled invalid input with no target retry.
-5. Generate and execute exactly three distinct `structured-extraction-v1` invoices.
-6. If signed x402 terms are advertised, enforce the X Layer/USDT0/amount/recipient/resource allowlist and wallet budgets before paying once.
-7. Canonicalize retained evidence, remove transient raw bodies, and publish the evidence and critical hashes to the registry.
-8. Expose the same canonical run as an agent-readable result and buyer-readable Passport.
+1. The worker fetches a public `/.well-known/launch-contract.json`, validates it against the active chain policy, and verifies its EIP-191 declaration.
+2. It performs MCP initialization and discovery without charging those discovery messages.
+3. It executes a fixed sample, a bounded invalid input, and exactly three fresh synthetic challenges.
+4. It checks output values, required fields, latency, and safe structured-error behavior.
+5. When paid delivery is declared, the target payer settles the exact allowlisted test USD₮0 terms once and verifies the successful receipt.
+6. It canonicalizes retained evidence with RFC 8785/JCS, computes the hashes, and publishes them through the configured registry writer.
+7. Reads and verification use the registry event/storage as authority; PostgreSQL is only an index and cache.
 
-The five gates are `discoverable`, `contract_correct`, `fresh_challenge`, `safe_to_rehearse`, and `paid_delivery`. They use only `pass`, `fail`, or `not_tested`; there is no opaque score and no LLM in the verdict path.
+The five gates are `discoverable`, `contract_correct`, `fresh_challenge`, `safe_to_rehearse`, and `paid_delivery`. Their only states are `pass`, `fail`, and `not_tested`. `verified` means every gate is `pass`.
 
-## Local development
-
-Prerequisites are Node.js 20+, pnpm, PostgreSQL, and Foundry for contract tests.
+## Fixture modes
 
 ```bash
-cp .env.example .env
-pnpm install
-pnpm --filter @launchproof/backend exec prisma generate
-pnpm check
-pnpm dev
+pnpm fixtures:build
+
+# Deterministic local URLs, intended for integration/development only.
+pnpm fixtures:local
+
+# Four separate public HTTPS URLs. Public modes require a clean Git worktree.
+bash scripts/start-fixtures-ngrok.sh
+bash scripts/start-fixtures-localtunnel.sh
 ```
 
-Paid routes fail with HTTP `402` when production x402 configuration is absent. A developer may explicitly set `ALLOW_LOCAL_UNPAID_RUNS=true` and choose the local-only checkbox. Such runs use `local-…` IDs, never claim settlement, never publish as public Passports, and cannot be mistaken for mainnet proof.
+Each script writes the four exact URLs and corresponding public provider addresses to ignored `.env`. Public startup derives `SOURCE_REVISION` from the clean committed `HEAD`; it refuses to sign public fixture claims from uncommitted code.
 
-`make demo` validates production configuration, starts PostgreSQL plus the local apps, and prints the browser URL. It does not bypass wallet approval or substitute testnet/local fixtures for required public mainnet evidence.
+## Independent verification
 
-## Repository map
+For a completed paid testnet run:
 
-- `frontend/` — responsive Next.js App Router interface and browser-side wallet/chain flows.
-- `backend/` — REST/MCP resources, OKX x402 integration, orchestration, SSRF boundary, evidence, Prisma index, and viem publisher.
-- `contracts/` — immutable Foundry registry with writer-only, write-once publication.
-- `fixtures/` — healthy, invalid-output, schema-drift, and timeout public service sources.
-- `schema/` — OpenAPI, JSON schemas, and checked registry ABI.
-- `docs/` — architecture, threat model, fixture behavior, reproduction, and ethical campaign records.
+```bash
+curl "$PUBLIC_API_BASE_URL/runs/$RUN_ID" | jq .
+curl "$PUBLIC_API_BASE_URL/verify/$RUN_ID" | jq .
+./scripts/verify-run.sh "$RUN_ID"
+```
+
+`verify-run.sh` requires both x402 settlements, all five passing gates, `execution_mode=testnet`, a valid provenance label, a published registry transaction, and recomputed chain/hash/signature matches.
 
 ## Honest boundary
 
-LaunchProof is on-chain-settled, publishes retained normalized evidence on-chain, and is independently verifiable. MCP execution, HTTPS fetching, latency measurement, and field comparisons occur in the backend and are attested by LaunchProof and, when present, the provider declaration. The immutable registry is a single-writer attestation registry; it is not a decentralized oracle and does not independently prove an HTTP response was truthful.
+LaunchProof is a single-writer, onchain attestation registry—not a decentralized oracle or security certification. The registry makes evidence immutable and independently hash-verifiable; it cannot itself observe HTTPS/MCP execution. Network execution, latency measurement, and field comparisons happen in the backend and are attested by LaunchProof, plus the provider declaration when supplied.
 
-LaunchProof is not a security certification. A passport reflects a point-in-time rehearsal and is not a guarantee of future uptime or behavior. A LaunchProof passport is not OKX marketplace identity verification and is not issued or endorsed by OKX.
+Controlled fixtures must be identified as LaunchProof fixtures. Testnet tokens have no monetary value, and a testnet Passport is not a mainnet settlement, marketplace identity check, or OKX endorsement.
 
 MIT licensed. See [`LICENSE`](./LICENSE).

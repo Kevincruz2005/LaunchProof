@@ -16,7 +16,7 @@ export class ResponseLimitError extends Error {}
 
 export async function safeRequest(
   rawUrl: string,
-  config: Pick<Config, "ALLOW_PRIVATE_TARGETS">,
+  config: Pick<Config, "ALLOW_PRIVATE_TARGETS" | "fixtureUrls">,
   init: {
     method?: "GET" | "POST";
     headers?: Record<string, string>;
@@ -39,6 +39,9 @@ export async function safeRequest(
     });
     const signal = AbortSignal.timeout(init.timeoutMs ?? 8_000);
     try {
+      const fixtureTunnelHeaders = isConfiguredFixtureHost(current, config.fixtureUrls)
+        ? { "bypass-tunnel-reminder": "true", "x-tunnel-skip-bypass": "true" }
+        : {};
       const response = await request(current, {
         method: init.method ?? "GET",
         body: init.body,
@@ -46,8 +49,7 @@ export async function safeRequest(
           accept: "application/json, text/event-stream",
           "content-type": "application/json",
           "user-agent": "LaunchProof/1.0 bounded-rehearsal",
-          "bypass-tunnel-reminder": "true",
-          "x-tunnel-skip-bypass": "true",
+          ...fixtureTunnelHeaders,
           ...init.headers,
         },
         headersTimeout: init.timeoutMs ?? 8_000,
@@ -63,7 +65,9 @@ export async function safeRequest(
         const location = headers.location;
         await response.body.dump();
         if (!location || redirect === MAX_REDIRECTS) throw new Error("Redirect limit exceeded");
-        current = validateTargetUrl(new URL(location, current).toString(), config.ALLOW_PRIVATE_TARGETS);
+        const redirected = validateTargetUrl(new URL(location, current).toString(), config.ALLOW_PRIVATE_TARGETS);
+        validateSafeRedirect(current, redirected, init.method ?? "GET");
+        current = redirected;
         continue;
       }
       const chunks: Buffer[] = [];
@@ -90,9 +94,14 @@ export async function safeRequest(
   throw new Error("Unreachable redirect state");
 }
 
+export function validateSafeRedirect(current: URL, redirected: URL, method: "GET" | "POST"): void {
+  if (method === "POST") throw new Error("Redirects are forbidden for POST and payment requests");
+  if (current.origin !== redirected.origin) throw new Error("Cross-origin redirects are forbidden");
+}
+
 export async function fetchJson<T>(
   url: string,
-  config: Pick<Config, "ALLOW_PRIVATE_TARGETS">,
+  config: Pick<Config, "ALLOW_PRIVATE_TARGETS" | "fixtureUrls">,
   timeoutMs = 8_000,
 ): Promise<T> {
   const response = await safeRequest(url, config, { timeoutMs });
@@ -102,4 +111,15 @@ export async function fetchJson<T>(
   } catch {
     throw new Error("Target returned invalid JSON");
   }
+}
+
+function isConfiguredFixtureHost(url: URL, fixtureUrls: Config["fixtureUrls"]): boolean {
+  return Object.values(fixtureUrls).some((fixtureUrl) => {
+    if (!fixtureUrl) return false;
+    try {
+      return new URL(fixtureUrl).hostname.toLowerCase() === url.hostname.toLowerCase();
+    } catch {
+      return false;
+    }
+  });
 }

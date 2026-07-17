@@ -3,9 +3,8 @@
   "info": {
     "title": "LaunchProof API",
     "version": "1.0.0",
-    "description": "Bounded agent-service rehearsal and chain-backed Service Passport API. Paid routes use fixed OKX x402 exact-scheme prices on eip155:196."
+    "description": "Bounded agent-service rehearsal and chain-backed Service Passport API. The active X Layer network and USD₮0 asset are runtime configuration; the supported testnet profile is eip155:1952."
   },
-  "servers": [{ "url": "https://api.launchproof.example" }],
   "paths": {
     "/healthz": {
       "get": { "operationId": "health", "responses": { "200": { "description": "Current dependency state", "content": { "application/json": { "schema": { "type": "object" } } } } } }
@@ -14,6 +13,7 @@
       "post": {
         "operationId": "createGenesisRehearsal",
         "summary": "Create a 0.01 USDT0 rehearsal",
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
         "requestBody": { "$ref": "#/components/requestBodies/Rehearsal" },
         "responses": {
           "202": { "description": "Run queued", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RunProgress" } } } },
@@ -26,6 +26,7 @@
       "post": {
         "operationId": "createRenewal",
         "summary": "Create a 0.10 USDT0 renewal",
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
         "requestBody": { "$ref": "#/components/requestBodies/Renewal" },
         "responses": {
           "202": { "description": "Renewal queued", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RunProgress" } } } },
@@ -70,16 +71,23 @@
   },
   "components": {
     "parameters": {
-      "RunId": { "name": "runId", "in": "path", "required": true, "schema": { "type": "string" } }
+      "RunId": { "name": "runId", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^0x[0-9a-fA-F]{64}$" } },
+      "IdempotencyKey": {
+        "name": "idempotency-key",
+        "in": "header",
+        "required": true,
+        "description": "Must exactly equal the idempotency_key field in the JSON body on both the initial 402 request and paid replay.",
+        "schema": { "type": "string", "minLength": 8, "maxLength": 120 }
+      }
     },
     "requestBodies": {
       "Rehearsal": {
         "required": true,
-        "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["url", "idempotency_key"], "properties": { "url": { "type": "string", "format": "uri" }, "idempotency_key": { "type": "string", "minLength": 8, "maxLength": 120 } } } } }
+        "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["url", "idempotency_key"], "properties": { "url": { "$ref": "#/components/schemas/PublicLaunchContractUrl" }, "idempotency_key": { "type": "string", "minLength": 8, "maxLength": 120 } } } } }
       },
       "Renewal": {
         "required": true,
-        "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["url", "idempotency_key", "previous_run_id"], "properties": { "url": { "type": "string", "format": "uri" }, "idempotency_key": { "type": "string", "minLength": 8, "maxLength": 120 }, "previous_run_id": { "type": "string" } } } } }
+        "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["url", "idempotency_key", "previous_run_id"], "properties": { "url": { "$ref": "#/components/schemas/PublicLaunchContractUrl" }, "idempotency_key": { "type": "string", "minLength": 8, "maxLength": 120 }, "previous_run_id": { "type": "string", "pattern": "^0x[0-9a-fA-F]{64}$" } } } } }
       }
     },
     "responses": {
@@ -88,6 +96,13 @@
       "NotFound": { "description": "Resource not found" }
     },
     "schemas": {
+      "PublicLaunchContractUrl": {
+        "type": "string",
+        "format": "uri",
+        "maxLength": 2048,
+        "pattern": "^https://[^/?#@\\s]+(?:/[^?#\\s]*)?$",
+        "description": "Public HTTPS URL without credentials, query string, or fragment; DNS/private-network policy is enforced at runtime."
+      },
       "GateState": { "type": "string", "enum": ["pass", "fail", "not_tested"] },
       "Gates": {
         "type": "object", "additionalProperties": false,
@@ -106,29 +121,94 @@
       },
       "Passport": {
         "type": "object",
-        "required": ["run_id", "state", "label", "scope", "passport_status", "gates", "evidence_hash", "manifest_hash", "input_hash", "normalized_result_hash", "generated_at"],
+        "additionalProperties": false,
+        "required": ["run_id", "idempotency_key", "state", "previous_run_id", "label", "scope", "passport_status", "gates", "canonical_evidence", "canonical_evidence_jcs", "evidence_hash", "manifest_hash", "input_hash", "normalized_result_hash", "source_version_sha", "build_commit_sha", "generated_at", "provider_declaration", "payment", "target_payment", "chain", "remediation", "limitations"],
         "properties": {
           "run_id": { "type": "string" },
+          "idempotency_key": { "type": "string", "minLength": 1 },
           "state": { "enum": ["complete", "complete_local"] },
-          "label": { "enum": ["fixture", "production", "local_only"] },
+          "previous_run_id": { "type": ["string", "null"] },
+          "label": { "enum": ["fixture", "external"], "description": "Service provenance; execution mode is carried in canonical_evidence." },
           "scope": { "const": "structured-extraction-v1 only" },
           "passport_status": { "enum": ["verified", "needs-attention", "not-rehearsable"] },
           "gates": { "$ref": "#/components/schemas/Gates" },
           "canonical_evidence": { "type": "object" },
+          "canonical_evidence_jcs": { "type": "string", "minLength": 2 },
           "evidence_hash": { "type": "string", "pattern": "^0x[0-9a-f]{64}$" },
           "manifest_hash": { "type": "string", "pattern": "^0x[0-9a-f]{64}$" },
           "input_hash": { "type": "string", "pattern": "^0x[0-9a-f]{64}$" },
           "normalized_result_hash": { "type": "string", "pattern": "^0x[0-9a-f]{64}$" },
+          "source_version_sha": { "type": "string", "pattern": "^[0-9a-fA-F]{40}$" },
+          "build_commit_sha": { "type": "string", "pattern": "^[0-9a-fA-F]{40}$" },
           "generated_at": { "type": "string", "format": "date-time" },
-          "chain": { "type": "object" },
-          "limitations": { "type": "array", "items": { "type": "string" } }
+          "provider_declaration": { "$ref": "#/components/schemas/ProviderDeclaration" },
+          "payment": { "$ref": "#/components/schemas/PaymentReference" },
+          "target_payment": { "oneOf": [{ "$ref": "#/components/schemas/PaymentReference" }, { "type": "null" }] },
+          "chain": { "$ref": "#/components/schemas/ChainReference" },
+          "remediation": { "type": "array", "items": { "type": "string" } },
+          "limitations": { "type": "array", "items": { "type": "string" } },
+          "challenge_summary": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["runs", "pass_count", "generation_time"],
+            "properties": {
+              "runs": { "type": "array", "items": { "type": "object" } },
+              "pass_count": { "type": "integer", "minimum": 0 },
+              "generation_time": { "type": "string", "format": "date-time" }
+            }
+          },
+          "receipt_url": { "type": "string", "format": "uri" }
+        }
+      },
+      "ProviderDeclaration": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["provider_address", "manifest_hash", "signature", "verification_state"],
+        "properties": {
+          "provider_address": { "type": "string", "pattern": "^0x[0-9a-fA-F]{40}$" },
+          "manifest_hash": { "type": "string", "pattern": "^0x[0-9a-f]{64}$" },
+          "signature": { "type": ["string", "null"], "pattern": "^0x[0-9a-fA-F]{130}$" },
+          "verification_state": { "enum": ["verified", "not_provided", "invalid"] }
+        }
+      },
+      "ChainReference": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["registry_address", "evidence_transaction_hash", "block_number", "explorer_url", "published"],
+        "properties": {
+          "registry_address": { "type": "string", "pattern": "^0x[0-9a-fA-F]{40}$" },
+          "evidence_transaction_hash": { "type": "string", "pattern": "^0x[0-9a-fA-F]{64}$" },
+          "block_number": { "type": "string", "pattern": "^[0-9]+$" },
+          "explorer_url": { "oneOf": [{ "type": "string", "format": "uri" }, { "const": "" }] },
+          "published": { "type": "boolean" }
+        }
+      },
+      "PaymentReference": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["payment_id", "kind", "amount", "amount_atomic", "amount_display", "asset_decimals", "asset", "network", "payer", "recipient", "route", "settlement_transaction", "status", "timestamp"],
+        "properties": {
+          "payment_id": { "type": "string" },
+          "kind": { "enum": ["launchproof", "target"] },
+          "amount": { "type": "string", "pattern": "^[0-9]+$", "description": "Compatibility alias for amount_atomic." },
+          "amount_atomic": { "type": "string", "pattern": "^[0-9]+$" },
+          "amount_display": { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?$" },
+          "asset_decimals": { "type": "integer", "minimum": 0 },
+          "asset": { "type": "string", "pattern": "^0x[0-9a-fA-F]{40}$" },
+          "network": { "type": "string", "pattern": "^eip155:[1-9][0-9]*$" },
+          "payer": { "type": ["string", "null"] },
+          "recipient": { "type": ["string", "null"] },
+          "route": { "type": "string" },
+          "settlement_transaction": { "type": ["string", "null"] },
+          "status": { "enum": ["settled", "not_tested", "local_only"] },
+          "timestamp": { "type": "string", "format": "date-time" }
         }
       },
       "Verification": {
         "type": "object",
-        "required": ["chain_record_found", "evidence_hash_match", "manifest_hash_match", "input_hash_match", "result_hash_match", "provider_signature_match", "gate_status_match", "storage_match", "link_fields_match", "cache_match", "match"],
+        "required": ["chain_record_found", "canonical_jcs_match", "evidence_hash_match", "manifest_hash_match", "input_hash_match", "result_hash_match", "provider_signature_match", "gate_status_match", "storage_match", "link_fields_match", "evidence_semantics_match", "launch_payment_transfer_match", "target_payment_transfer_match", "cache_match", "match"],
         "properties": {
-          "chain_record_found": { "type": "boolean" }, "evidence_hash_match": { "type": "boolean" }, "manifest_hash_match": { "type": "boolean" }, "input_hash_match": { "type": "boolean" }, "result_hash_match": { "type": "boolean" }, "provider_signature_match": { "type": "boolean" }, "gate_status_match": { "type": "boolean" }, "storage_match": { "type": "boolean" }, "link_fields_match": { "type": "boolean" }, "cache_match": { "type": ["boolean", "null"] }, "match": { "type": "boolean" }
+          "chain_record_found": { "type": "boolean" }, "canonical_jcs_match": { "type": "boolean" }, "evidence_hash_match": { "type": "boolean" }, "manifest_hash_match": { "type": "boolean" }, "input_hash_match": { "type": "boolean" }, "result_hash_match": { "type": "boolean" }, "provider_signature_match": { "type": "boolean" }, "gate_status_match": { "type": "boolean" }, "storage_match": { "type": "boolean" }, "link_fields_match": { "type": "boolean" }, "evidence_semantics_match": { "type": "boolean" }, "launch_payment_transfer_match": { "type": "boolean" }, "target_payment_transfer_match": { "type": ["boolean", "null"] }, "cache_match": { "type": ["boolean", "null"] }, "match": { "type": "boolean" }
         }
       }
     }

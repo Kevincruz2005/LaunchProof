@@ -5,7 +5,13 @@ import { z } from "zod";
 import type { Config } from "../config.js";
 import type { Repository } from "../db/store.js";
 import { RehearsalService } from "../workers/rehearsal.js";
-import { launchPaymentReference } from "../payments/inbound.js";
+import {
+  idempotencyKeySchema,
+  isAuthorizedLocalRun,
+  launchPaymentReference,
+  previousRunIdSchema,
+  rehearsalTargetSchemaFor,
+} from "../payments/inbound.js";
 import { RegistryService } from "../chain/registry.js";
 
 type McpMode = "rehearse" | "renew" | "public";
@@ -29,8 +35,9 @@ export async function handleMcp(
       },
       async ({ run_id }) => {
         const cached = await repository.getRun(run_id);
-        const chainRun = config.productionReady ? await new RegistryService(config).readPublishedRun(run_id) : null;
-        const run = config.productionReady
+        const cache = cached && "canonical_evidence" in cached ? cached : null;
+        const chainRun = config.chainReady ? await new RegistryService(config).readPublishedRun(run_id, cache) : null;
+        const run = config.chainReady
           ? chainRun ?? (cached && !("canonical_evidence" in cached) ? cached : null)
           : cached;
         if (!run) return { content: [{ type: "text", text: "Run not found" }], isError: true };
@@ -43,9 +50,9 @@ export async function handleMcp(
       {
         description: mode === "renew" ? "Renew a Passport after a contract or source revision changes." : "Run a bounded Launch Contract rehearsal.",
         inputSchema: {
-          url: z.string().url(),
-          idempotency_key: z.string().min(8).max(120),
-          previous_run_id: z.string().min(1).max(100).optional(),
+          url: rehearsalTargetSchemaFor(config.ALLOW_PRIVATE_TARGETS),
+          idempotency_key: idempotencyKeySchema,
+          previous_run_id: previousRunIdSchema.optional(),
         },
       },
       async ({ url, idempotency_key, previous_run_id }) => {
@@ -56,21 +63,15 @@ export async function handleMcp(
           return { content: [{ type: "text", text: "Use /mcp/renew when previous_run_id is supplied" }], isError: true };
         }
         const price = mode === "renew" ? "0.10" : "0.01";
-        const run = await service.reserve(url, idempotency_key);
-        if (run.state === "payment_required") {
-          response.once("finish", () => {
-            void (async () => {
-              const payment = launchPaymentReference(request, response, price, request.path, config);
-              await service.runReserved(
-                run.run_id,
-                { url, idempotency_key, payment, ...(previous_run_id ? { previous_run_id } : {}) },
-                false,
-              );
-            })().catch(async (error: unknown) => {
-              const message = error instanceof Error ? error.message : "Post-settlement execution failed";
-              await repository.updateState(run.run_id, "failed", message);
-            });
-          });
+        const operation = mode === "renew" ? "renewal" : "genesis";
+        const run = await service.reserve(url, idempotency_key, operation, previous_run_id ?? null);
+        if (run.state === "payment_required" && isAuthorizedLocalRun(request, config)) {
+          const payment = await launchPaymentReference(request, response, price, request.path, config);
+          await service.runReserved(
+            run.run_id,
+            { url, idempotency_key, payment, ...(previous_run_id ? { previous_run_id } : {}) },
+            false,
+          );
         }
         return { content: [{ type: "text", text: JSON.stringify(run) }] };
       },

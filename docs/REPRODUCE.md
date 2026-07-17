@@ -1,58 +1,110 @@
-# Reproduce and verify
+# Reproduce and verify X Layer testnet evidence
 
-Set the public values without placing private keys in shell history:
+Follow [`setup.md`](../setup.md) first. It creates ignored configuration, deploys a fresh registry, records observed deployment metadata, starts four signed fixtures, and validates both RPCs without printing secrets.
 
-```bash
-export PUBLIC_API_BASE_URL=https://api.example
-export XLAYER_RPC_URL=https://your-xlayer-rpc
-export REGISTRY_ADDRESS=0x...
-export REGISTRY_DEPLOYMENT_BLOCK=123456
-export RUN_ID=0x...
+Public reproduction requires a clean committed checkout. The run must report:
+
+```text
+network=eip155:1952
+execution_mode=testnet
+payment.status=settled
+target_payment.status=settled
+chain.published=true
 ```
 
-## Validate a Launch Contract
+Test USD₮0 and test OKB have no monetary value; they must never be described as mainnet or real-value settlement.
+
+## Validate configuration and deployment
 
 ```bash
-curl -fsS https://provider.example/.well-known/launch-contract.json \
-  | jq -e '.contract_version == "1.0" and .mode == "sample_only" and .challenge_profile.challenge_runs == 3'
-node scripts/verify-fixture-manifest.mjs https://healthy.fixtures.example/.well-known/launch-contract.json
+node scripts/validate-demo-env.mjs
 ```
 
-To reproduce the declaration hash, remove only `declaration_signature`, RFC 8785-canonicalize the complete remaining object, SHA-256 the UTF-8 bytes, then verify an EIP-191 personal signature over the 32-byte hash. The backend implementation is in `backend/src/evidence/canonical.ts` and `backend/src/launch-contract/schema.ts`.
+This read-only command checks source SHA, mode-0600 key/address custody relationships, separated roles, explicit signed fixture identities and contract fields, target-payment caps, live writer/target-payer funding, allowlist, both RPC chain IDs, official test-token bytecode/decimals, facilitator support, registry bytecode hash, and writer. It sends no transaction.
 
-## Read contract storage
+To reproduce registry metadata from the actual deployment transaction:
 
 ```bash
-cast call "$REGISTRY_ADDRESS" \
+forge build --root contracts
+pnpm registry:record-testnet -- "$DEPLOY_TX"
+```
+
+The helper verifies that the transaction created the locally built registry with the configured writer constructor argument and that code did not exist at the prior block.
+
+## Validate a fixture Launch Contract
+
+Export or substitute only these public values from the validated configuration; do not source the whole application environment into the shell:
+
+```bash
+node scripts/verify-fixture-manifest.mjs \
+  "$FIXTURE_HEALTHY_URL" \
+  "$BUILD_COMMIT_SHA" \
+  "$FIXTURE_HEALTHY_URL" \
+  healthy \
+  eip155:1952 \
+  "$XLAYER_USDT0_ADDRESS" \
+  x402_optional \
+  "$FIXTURE_PAYMENT_RECIPIENT" \
+  "$FIXTURE_PAYMENT_AMOUNT_ATOMIC"
+```
+
+The verifier checks every field and rejects unknown fields before removing only `declaration_signature`, RFC 8785-canonicalizing the remaining object, SHA-256 hashing its UTF-8 bytes, and verifying the EIP-191 signature against `provider_address`. It checks the exact controlled variant, source, endpoints, sample, assertions, challenge profile, safety claims, payment mode, network, asset, recipient, and atomic amount. The full `node scripts/validate-demo-env.mjs` command performs this verification for all four configured fixture origins.
+
+## Read contract storage directly
+
+Copy the observed public RPC and registry values printed by the setup helpers (or displayed by the project card), then query chain `1952`. Do not source the application `.env` into an interactive shell because it also contains runtime secrets.
+
+```bash
+RPC_URL='copy the exact public XLAYER_RPC_URL'
+REGISTRY='copy the observed REGISTRY_ADDRESS'
+RUN_ID='copy the completed run ID'
+
+cast call "$REGISTRY" \
   'getRun(bytes32)((bytes32,bytes32,bytes32,bytes32,bytes32,bytes32,bytes32,address,address,uint40,uint16,uint8,bool,bool))' \
-  "$RUN_ID" --rpc-url "$XLAYER_RPC_URL" --chain 196
+  "$RUN_ID" \
+  --rpc-url "$RPC_URL" \
+  --chain 1952
 ```
 
-## Fetch log evidence and recompute hashes
+The tuple contains evidence, manifest, input, normalized-result, source-revision, and payment-receipt hashes; previous run ID; provider/writer; timestamp; gate bitmap; status; provider-signature state; and trusted-fixture state.
+
+## Fetch event evidence and recompute
 
 ```bash
-curl -fsS "$PUBLIC_API_BASE_URL/verify/$RUN_ID" | jq
+curl -fsS "$PUBLIC_API_BASE_URL/runs/$RUN_ID" | jq .
+curl -fsS "$PUBLIC_API_BASE_URL/verify/$RUN_ID" | jq .
 ./scripts/verify-run.sh "$RUN_ID"
 ```
 
-The script requests the chain-derived verification endpoint, refuses a missing registry record, and requires the evidence, manifest, input, result, provider declaration, gate/status, storage, and link-field checks to match. `cache_match` is reported but cannot affect overall chain `match`.
+The helper refuses local/unpaid evidence. It requires chain `eip155:1952`, both x402 settlements, all five gates, verified status, a publication transaction, exact event-bytes-to-JCS reserialization, and matching evidence/manifest/input/result/provider/gate/storage/link checks.
 
-For a fully independent decode, query the `RunPublished(bytes32,bytes32,bytes32,bytes32,bytes32,bytes32,bytes32,bytes32,address,address,uint40,uint16,uint8,bool,bool,bytes)` topic from `REGISTRY_DEPLOYMENT_BLOCK`, ABI-decode `canonicalEvidence`, SHA-256 the exact bytes, then JCS/SHA-256 the three embedded hash-material objects.
+For a fully independent decode:
+
+1. Query the `RunPublished` topic from `REGISTRY_DEPLOYMENT_BLOCK`, filtered by indexed `runId` and the exact configured registry.
+2. Decode the event with [`schema/registry.abi.json`](../schema/registry.abi.json).
+3. SHA-256 the exact decoded `canonicalEvidence` bytes and compare `evidenceHash`.
+4. Parse the canonical JSON and RFC 8785/JCS + SHA-256 the manifest signing body, retained inputs, normalized comparisons, and normalized LaunchProof payment reference.
+5. Verify the EIP-191 provider signature and compare the gate bitmap/status relationship. A stored `isFixture=true` is invalid unless `providerSignatureVerified=true`.
+6. Compare event values to `getRun(runId)` storage.
+
+The canonical payload is sanitized and bounded before publication, but it is permanently public. It must contain only synthetic/public samples and declared fields, never credentials or private customer data.
 
 ## Prove cache independence
 
+In an isolated test environment only:
+
 1. Save a successful `/verify/{runId}` response.
-2. Mutate or delete the PostgreSQL row in an isolated maintenance window.
+2. Stop writers and remove the corresponding PostgreSQL cache row.
 3. Request `/verify/{runId}` again.
-4. Confirm all chain-derived checks still pass while `cache_match` changes to `false` or `null`.
+4. Confirm chain-derived checks remain true while `cache_match` becomes `false` or `null`.
 
-On production startup the indexer scans `RunPublished` from `REGISTRY_DEPLOYMENT_BLOCK`, verifies each record from storage and logs, and repopulates runs, normalized invocations, providers, and public payment references. A record that fails chain verification is refused rather than indexed.
+PostgreSQL cannot make chain verification pass. Do not alter a shared/public database merely to demonstrate this property.
 
-## Local apps against real public fixtures
+## Local-only reproduction
 
 ```bash
-cp .env.example .env
-make demo
+pnpm fixtures:local
+pnpm dev
 ```
 
-The demo validates the X Layer/registry/public URL configuration, starts local PostgreSQL/backend/frontend, and prints the rehearsal URL for wallet approval. It does not start fixture mocks or use testnet. Never use unit-test, Anvil, or local-only run IDs in public evidence.
+Local fixtures use explicit loopback URLs and may be run without tunnel DNS. Local/unpaid execution is for development only, records local execution/payment state separately from provenance, and is intentionally rejected by the paid testnet verification helper.

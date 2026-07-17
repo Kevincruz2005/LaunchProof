@@ -22,8 +22,13 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @launchproof/backend exec prisma generate
+      - name: Validate operational scripts
+        run: |
+          for script in scripts/*.sh; do bash -n "$script"; done
+          for script in scripts/*.mjs; do node --check "$script"; done
       - run: pnpm contract:build
       - run: git diff --exit-code -- schema/registry.abi.json
+      - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
@@ -36,17 +41,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.7.1
       - run: forge fmt --check
       - run: forge build
       - run: forge test -vvv
 
-  mainnet-e2e:
+  xlayer-testnet-e2e:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    environment: xlayer-mainnet
+    environment: xlayer-testnet
     steps:
       - uses: actions/checkout@v4
       - run: ./scripts/verify-run.sh "$RUN_ID"
         env:
           PUBLIC_API_BASE_URL: ${{ secrets.PUBLIC_API_BASE_URL }}
-          RUN_ID: ${{ secrets.MAINNET_RUN_ID }}
+          RUN_ID: ${{ secrets.XLAYER_TESTNET_RUN_ID }}

@@ -74,11 +74,14 @@ contract LaunchProofRegistry {
     ) external {
         if (msg.sender != writer) revert Unauthorized();
         if (runs[runId].anchoredAt != 0) revert DuplicateRun();
-        if (runId == bytes32(0) || supplied.evidenceHash == bytes32(0)
-            || supplied.manifestHash == bytes32(0) || supplied.inputHash == bytes32(0)
-            || supplied.normalizedResultHash == bytes32(0)
-            || supplied.sourceRevisionHash == bytes32(0)
-            || supplied.paymentReceiptHash == bytes32(0) || supplied.provider == address(0)) {
+        if (
+            runId == bytes32(0) || supplied.evidenceHash == bytes32(0)
+                || supplied.manifestHash == bytes32(0) || supplied.inputHash == bytes32(0)
+                || supplied.normalizedResultHash == bytes32(0)
+                || supplied.sourceRevisionHash == bytes32(0)
+                || supplied.paymentReceiptHash == bytes32(0) || supplied.provider == address(0)
+                || supplied.anchoredBy != address(0) || supplied.anchoredAt != 0
+        ) {
             revert InvalidRecord();
         }
         if (canonicalEvidence.length > MAX_EVIDENCE_BYTES) revert EvidenceTooLarge();
@@ -97,6 +100,11 @@ contract LaunchProofRegistry {
         } else if (supplied.providerSignatureVerified) {
             revert InvalidProviderSignature();
         }
+        if (
+            (supplied.isFixture || supplied.status == PassportStatus.Verified) && !signatureVerified
+        ) {
+            revert InvalidProviderSignature();
+        }
 
         RunRecord memory stored = supplied;
         stored.anchoredBy = msg.sender;
@@ -107,9 +115,11 @@ contract LaunchProofRegistry {
         _emitRunPublished(runId, stored, canonicalEvidence);
     }
 
-    function _emitRunPublished(bytes32 runId, RunRecord memory stored, bytes calldata canonicalEvidence)
-        private
-    {
+    function _emitRunPublished(
+        bytes32 runId,
+        RunRecord memory stored,
+        bytes calldata canonicalEvidence
+    ) private {
         emit RunPublished(
             runId,
             stored.evidenceHash,
@@ -140,6 +150,9 @@ contract LaunchProofRegistry {
 
     /// @dev Two bits per gate: 0=not_tested, 1=pass, 2=fail; 3 is invalid.
     function _gateStatusIsValid(uint16 bitmap, PassportStatus status) private pure returns (bool) {
+        // Five gates occupy exactly ten bits. Reject non-canonical high bits so
+        // independent verifiers cannot disagree about the represented state.
+        if (bitmap >> 10 != 0) return false;
         bool firstFourTested = true;
         bool allFirstFourPass = true;
         bool anyFirstFourFail;
@@ -152,10 +165,12 @@ contract LaunchProofRegistry {
         }
         uint16 paid = (bitmap >> 8) & 3;
         if (status == PassportStatus.Verified) {
-            return allFirstFourPass && paid != 2;
+            // A paid Service Passport is verified only after all five observable
+            // claims, including settlement-backed delivery, have passed.
+            return allFirstFourPass && paid == 1;
         }
         if (status == PassportStatus.NeedsAttention) {
-            return firstFourTested && (anyFirstFourFail || paid == 2);
+            return firstFourTested && (anyFirstFourFail || paid != 1);
         }
         return !firstFourTested;
     }

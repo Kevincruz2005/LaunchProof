@@ -34,8 +34,6 @@ export function evaluateAssertions(
       match = typeof actual === "number" && typeof assertion.value === "number" && actual >= assertion.value;
     } else if (assertion.rule === "lte") {
       match = typeof actual === "number" && typeof assertion.value === "number" && actual <= assertion.value;
-    } else if (typeof actual === "string" && typeof assertion.value === "string") {
-      match = new RegExp(assertion.value, assertion.flags).test(actual.slice(0, 5_000));
     }
     return {
       field: assertion.path.slice(2),
@@ -55,12 +53,13 @@ export function compareChallenge(
   return fields.map((field) => {
     const expectedValue = expected[field];
     const actual = output[field];
+    const expectedMissing = expectedValue === undefined;
     const missing = actual === undefined;
     const wrongType = !missing && typeof actual !== typeof expectedValue && !(field === "total" && decimalCents(actual) !== null);
-    const match = field === "total" ? decimalEqual(expectedValue, actual) : Object.is(expectedValue, actual);
+    const match = !expectedMissing && (field === "total" ? decimalEqual(expectedValue, actual) : Object.is(expectedValue, actual));
     let classification: FailureClassification = null;
-    if (!match) classification = missing || wrongType ? "schema_drift" : "invalid_output";
-    return { field, expected: expectedValue, actual: actual ?? null, match, classification };
+    if (!match) classification = expectedMissing || missing || wrongType ? "schema_drift" : "invalid_output";
+    return { field, expected: expectedValue ?? null, actual: actual ?? null, match, classification };
   });
 }
 

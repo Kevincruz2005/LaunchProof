@@ -3,9 +3,10 @@ import { gateBitmap, passportStatus } from "../src/domain/gates.js";
 
 describe("passport gates", () => {
   it("produces verified only when the first four pass", () => {
-    const gates = { discoverable: "pass", contract_correct: "pass", fresh_challenge: "pass", safe_to_rehearse: "pass", paid_delivery: "not_tested" } as const;
+    const gates = { discoverable: "pass", contract_correct: "pass", fresh_challenge: "pass", safe_to_rehearse: "pass", paid_delivery: "pass" } as const;
     expect(passportStatus(gates, true)).toBe("verified");
-    expect(gateBitmap(gates)).toBe(85);
+    expect(gateBitmap(gates)).toBe(341);
+    expect(passportStatus({ ...gates, paid_delivery: "not_tested" }, true)).toBe("needs-attention");
   });
 
   it("distinguishes tested failure from infrastructure incompleteness", () => {

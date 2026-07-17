@@ -15,6 +15,8 @@ export type PassportStatus = "verified" | "needs-attention" | "not-rehearsable";
 export type FailureClassification = "invalid_output" | "schema_drift" | "timeout" | "unsafe_error" | null;
 export type RunState =
   | "payment_required"
+  | "settlement_claimed"
+  | "payment_ambiguous"
   | "payment_settled"
   | "queued"
   | "fetching_contract"
@@ -52,7 +54,11 @@ export interface InvocationEvidence {
 export interface PaymentReference {
   payment_id: string;
   kind: "launchproof" | "target";
+  /** Atomic token units. Retained as a compatibility alias for amount_atomic. */
   amount: string;
+  amount_atomic: string;
+  amount_display: string;
+  asset_decimals: number;
   asset: string;
   network: string;
   payer: string | null;
@@ -74,13 +80,16 @@ export interface CanonicalEvidence {
   schema_version: "1.0";
   run_id: string;
   target: string;
-  label: "fixture" | "production" | "local_only";
+  label: "fixture" | "external";
+  network: string;
+  execution_mode: "local" | "testnet" | "mainnet";
   generated_at: string;
   manifest: LaunchContract;
   discovery: Record<string, unknown>;
   fixed_sample: InvocationEvidence;
   invalid_input: InvocationEvidence;
   challenges: InvocationEvidence[];
+  paid_delivery: InvocationEvidence | null;
   timings: { invocation_ms: number[]; total_ms: number; observed_p95_ms: number };
   gates: Gates;
   passport_status: PassportStatus;
@@ -110,7 +119,7 @@ export interface RunRecord {
   idempotency_key: string;
   state: RunState;
   previous_run_id: string | null;
-  label: "fixture" | "production" | "local_only";
+  label: "fixture" | "external";
   scope: "structured-extraction-v1 only";
   passport_status: PassportStatus;
   gates: Gates;

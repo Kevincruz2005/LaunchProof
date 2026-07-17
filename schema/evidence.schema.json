@@ -1,31 +1,132 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://launchproof.example/schema/evidence.schema.json",
   "title": "LaunchProof Canonical Evidence",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "run_id", "target", "label", "generated_at", "manifest", "discovery", "fixed_sample", "invalid_input", "challenges", "timings", "gates", "passport_status", "provider_declaration", "payments", "hash_material", "source_revision", "build_commit", "remediation", "limitations"],
+  "required": ["schema_version", "run_id", "target", "label", "network", "execution_mode", "generated_at", "manifest", "discovery", "fixed_sample", "invalid_input", "challenges", "paid_delivery", "timings", "gates", "passport_status", "provider_declaration", "payments", "hash_material", "source_revision", "build_commit", "previous_run_id", "remediation", "limitations"],
   "properties": {
     "schema_version": { "const": "1.0" },
-    "run_id": { "type": "string" },
-    "target": { "type": "string" },
-    "label": { "enum": ["fixture", "production", "local_only"] },
+    "run_id": { "$ref": "#/$defs/bytes32" },
+    "target": { "$ref": "#/$defs/public_endpoint" },
+    "label": { "enum": ["fixture", "external"], "$comment": "Provenance only. Runtime/network state is expressed by execution_mode and payment status." },
+    "network": { "type": "string", "pattern": "^eip155:[1-9][0-9]*$", "examples": ["eip155:1952"] },
+    "execution_mode": { "enum": ["local", "testnet", "mainnet"] },
     "generated_at": { "type": "string", "format": "date-time" },
-    "manifest": { "type": "object" },
+    "manifest": { "type": "object", "$comment": "Must also validate against launch-contract.schema.json and the active chain policy." },
     "discovery": { "type": "object" },
-    "fixed_sample": { "type": "object" },
-    "invalid_input": { "type": "object" },
-    "challenges": { "type": "array", "minItems": 0, "maxItems": 3 },
-    "timings": { "type": "object" },
-    "gates": { "type": "object" },
+    "fixed_sample": { "$ref": "#/$defs/invocation" },
+    "invalid_input": { "$ref": "#/$defs/invocation" },
+    "challenges": { "type": "array", "minItems": 0, "maxItems": 3, "items": { "$ref": "#/$defs/invocation" } },
+    "paid_delivery": { "oneOf": [{ "$ref": "#/$defs/invocation" }, { "type": "null" }] },
+    "timings": {
+      "type": "object", "additionalProperties": false,
+      "required": ["invocation_ms", "total_ms", "observed_p95_ms"],
+      "properties": {
+        "invocation_ms": { "type": "array", "maxItems": 6, "items": { "type": "integer", "minimum": 0, "maximum": 30000 } },
+        "total_ms": { "type": "integer", "minimum": 0, "maximum": 30000 },
+        "observed_p95_ms": { "type": "integer", "minimum": 0, "maximum": 30000 }
+      }
+    },
+    "gates": { "$ref": "#/$defs/gates" },
     "passport_status": { "enum": ["verified", "needs-attention", "not-rehearsable"] },
-    "provider_declaration": { "type": "object" },
-    "payments": { "type": "object" },
-    "hash_material": { "type": "object" },
-    "source_revision": { "type": "string" },
-    "build_commit": { "type": "string" },
-    "previous_run_id": { "type": ["string", "null"] },
-    "remediation": { "type": "array", "items": { "type": "string" } },
-    "limitations": { "type": "array", "items": { "type": "string" } }
+    "provider_declaration": {
+      "type": "object", "additionalProperties": false,
+      "required": ["provider_address", "manifest_hash", "signature", "verification_state"],
+      "properties": {
+        "provider_address": { "$ref": "#/$defs/address" },
+        "manifest_hash": { "$ref": "#/$defs/bytes32" },
+        "signature": { "oneOf": [{ "type": "string", "pattern": "^0x[0-9a-fA-F]{130}$" }, { "type": "null" }] },
+        "verification_state": { "enum": ["verified", "not_provided", "invalid"] }
+      }
+    },
+    "payments": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["launchproof", "target"],
+      "properties": {
+        "launchproof": { "$ref": "#/$defs/payment" },
+        "target": { "oneOf": [{ "$ref": "#/$defs/payment" }, { "type": "null" }] }
+      }
+    },
+    "hash_material": {
+      "type": "object", "additionalProperties": false,
+      "required": ["inputs", "normalized_comparisons"],
+      "properties": {
+        "inputs": { "type": "array", "maxItems": 6, "items": { "$ref": "#/$defs/primitive_record" } },
+        "normalized_comparisons": { "type": "array", "maxItems": 80, "items": { "$ref": "#/$defs/comparison" } }
+      }
+    },
+    "source_revision": { "type": "string", "pattern": "^[0-9a-fA-F]{40}$" },
+    "build_commit": { "type": "string", "pattern": "^[0-9a-fA-F]{40}$" },
+    "previous_run_id": { "oneOf": [{ "$ref": "#/$defs/bytes32" }, { "type": "null" }] },
+    "remediation": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 500 } },
+    "limitations": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "type": "string", "maxLength": 500 } }
+  },
+  "$defs": {
+    "bytes32": { "type": "string", "pattern": "^0x(?!0{64}$)[0-9a-fA-F]{64}$" },
+    "address": { "type": "string", "pattern": "^0x(?!0{40}$)[0-9a-fA-F]{40}$" },
+    "public_endpoint": { "type": "string", "format": "uri", "maxLength": 2048, "pattern": "^https://[^/?#@\\s]+(?:/[^?#\\s]*)?$" },
+    "primitive": { "oneOf": [{ "type": "string", "maxLength": 5000 }, { "type": "number" }, { "type": "boolean" }, { "type": "null" }] },
+    "primitive_record": { "type": "object", "maxProperties": 30, "propertyNames": { "maxLength": 100 }, "additionalProperties": { "$ref": "#/$defs/primitive" } },
+    "classification": { "enum": ["invalid_output", "schema_drift", "timeout", "unsafe_error", null] },
+    "comparison": {
+      "type": "object", "additionalProperties": false,
+      "required": ["field", "expected", "actual", "match", "classification"],
+      "properties": {
+        "field": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "expected": { "$ref": "#/$defs/primitive" },
+        "actual": { "$ref": "#/$defs/primitive" },
+        "match": { "type": "boolean" },
+        "classification": { "$ref": "#/$defs/classification" }
+      }
+    },
+    "invocation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "index", "input", "expected", "output", "comparisons", "structured_error", "latency_ms", "classification"],
+      "properties": {
+        "kind": { "enum": ["fixed_sample", "invalid_input", "challenge", "paid_delivery"] },
+        "index": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "input": { "$ref": "#/$defs/primitive_record" },
+        "expected": { "oneOf": [{ "$ref": "#/$defs/primitive_record" }, { "type": "null" }] },
+        "output": { "oneOf": [{ "$ref": "#/$defs/primitive_record" }, { "type": "null" }] },
+        "comparisons": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/comparison" } },
+        "structured_error": { "oneOf": [{ "type": "object", "additionalProperties": false, "required": ["code", "message"], "properties": { "code": { "oneOf": [{ "type": "string", "maxLength": 100 }, { "type": "number" }] }, "message": { "type": "string", "maxLength": 500 } } }, { "type": "null" }] },
+        "latency_ms": { "type": "integer", "minimum": 0, "maximum": 30000 },
+        "classification": { "$ref": "#/$defs/classification" }
+      }
+    },
+    "gate_state": { "enum": ["pass", "fail", "not_tested"] },
+    "gates": {
+      "type": "object", "additionalProperties": false,
+      "required": ["discoverable", "contract_correct", "fresh_challenge", "safe_to_rehearse", "paid_delivery"],
+      "properties": {
+        "discoverable": { "$ref": "#/$defs/gate_state" },
+        "contract_correct": { "$ref": "#/$defs/gate_state" },
+        "fresh_challenge": { "$ref": "#/$defs/gate_state" },
+        "safe_to_rehearse": { "$ref": "#/$defs/gate_state" },
+        "paid_delivery": { "$ref": "#/$defs/gate_state" }
+      }
+    },
+    "payment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payment_id", "kind", "amount", "amount_atomic", "amount_display", "asset_decimals", "asset", "network", "payer", "recipient", "route", "settlement_transaction", "status", "timestamp"],
+      "properties": {
+        "payment_id": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["launchproof", "target"] },
+        "amount": { "type": "string", "pattern": "^[0-9]+$", "$comment": "Compatibility alias for amount_atomic." },
+        "amount_atomic": { "type": "string", "pattern": "^[0-9]+$" },
+        "amount_display": { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?$" },
+        "asset_decimals": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "asset": { "$ref": "#/$defs/address" },
+        "network": { "type": "string", "pattern": "^eip155:[1-9][0-9]*$" },
+        "payer": { "oneOf": [{ "$ref": "#/$defs/address" }, { "type": "null" }] },
+        "recipient": { "oneOf": [{ "$ref": "#/$defs/address" }, { "type": "null" }] },
+        "route": { "type": "string", "minLength": 1 },
+        "settlement_transaction": { "oneOf": [{ "$ref": "#/$defs/bytes32" }, { "type": "null" }] },
+        "status": { "enum": ["settled", "not_tested", "local_only"] },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    }
   }
 }

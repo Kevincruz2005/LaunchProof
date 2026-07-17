@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 const bool = z.enum(["true", "false"]).default("false").transform((value) => value === "true");
+const testnetBool = z.enum(["true", "false"]).default("true").transform((value) => value === "true");
 const optionalUrl = z.string().url().optional().or(z.literal("").transform(() => undefined));
 const optionalAddress = z
   .string()
@@ -12,6 +13,44 @@ const optionalKey = z
   .regex(/^0x[0-9a-fA-F]{64}$/)
   .optional()
   .or(z.literal("").transform(() => undefined));
+const optionalBytes32 = z
+  .string()
+  .regex(/^0x[0-9a-fA-F]{64}$/)
+  .optional()
+  .or(z.literal("").transform(() => undefined));
+const optionalPositiveInteger = z.preprocess(
+  (value) => (value === "" || value === undefined ? undefined : value),
+  z.coerce.number().int().positive().optional(),
+);
+const optionalNetwork = z
+  .string()
+  .regex(/^eip155:[1-9][0-9]*$/)
+  .optional()
+  .or(z.literal("").transform(() => undefined));
+const okxBaseUrl = z.string().url().default("https://web3.okx.com").superRefine((value, context) => {
+  const url = new URL(value);
+  if (url.protocol !== "https:" || url.hostname.toLowerCase() !== "web3.okx.com" ||
+    url.port || (url.pathname !== "/" && url.pathname !== "") || url.search || url.hash || url.username || url.password) {
+    context.addIssue({ code: "custom", message: "OKX_BASE_URL must be exactly the official https://web3.okx.com origin" });
+  }
+});
+
+const XLAYER_TESTNET_CHAIN_ID = 1952;
+const XLAYER_TESTNET_USDT0_ADDRESS = "0x9e29b3aada05bf2d2c827af80bd28dc0b9b4fb0c" as const;
+
+export type XLayerNetwork = `eip155:${number}`;
+
+export interface XLayerProfile {
+  readonly id: number;
+  readonly network: XLayerNetwork;
+  readonly name: "X Layer" | "X Layer Testnet";
+  readonly testnet: boolean;
+  readonly rpcUrl?: string;
+  readonly fallbackRpcUrl?: string;
+  readonly explorerUrl: string;
+  readonly usdt0Address: `0x${string}`;
+  readonly usdt0Decimals: 6;
+}
 
 const EnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -19,22 +58,27 @@ const EnvSchema = z.object({
   PUBLIC_API_BASE_URL: z.string().url().default("http://localhost:4000"),
   PUBLIC_WEB_BASE_URL: z.string().url().default("http://localhost:3000"),
   BUILD_COMMIT_SHA: z.string().min(1).default("development"),
-  SOURCE_REPOSITORY: z.string().url().default("https://github.com/your-org/launchproof"),
+  SOURCE_REPOSITORY: z.string().url().default("https://github.com/Kevincruz2005/LaunchProof"),
   OKX_AI_LISTING_URL: z.string().url().optional().or(z.literal("").transform(() => undefined)),
   DEMO_VIDEO_URL: optionalUrl,
   REFERENCE_PAYMENT_ID: z.string().min(1).max(200).optional().or(z.literal("").transform(() => undefined)),
-  XLAYER_TESTNET: bool,
+  XLAYER_TESTNET: testnetBool,
+  XLAYER_CHAIN_ID: optionalPositiveInteger,
+  XLAYER_NETWORK: optionalNetwork,
+  XLAYER_USDT0_ADDRESS: optionalAddress,
+  XLAYER_EXPLORER_URL: optionalUrl,
   XLAYER_RPC_URL: optionalUrl,
   XLAYER_FALLBACK_RPC_URL: optionalUrl,
   REGISTRY_ADDRESS: optionalAddress,
   REGISTRY_DEPLOYMENT_BLOCK: z.coerce.bigint().nonnegative().default(0n),
+  REGISTRY_RUNTIME_CODE_HASH: optionalBytes32,
   REGISTRY_WRITER_PRIVATE_KEY: optionalKey,
   TARGET_PAYER_PRIVATE_KEY: optionalKey,
   PAYOUT_ADDRESS: optionalAddress,
   OKX_API_KEY: z.string().optional(),
   OKX_SECRET_KEY: z.string().optional(),
   OKX_PASSPHRASE: z.string().optional(),
-  OKX_BASE_URL: optionalUrl,
+  OKX_BASE_URL: okxBaseUrl,
   X402_ENABLED: bool,
   DATABASE_URL: z.string().optional(),
   TARGET_PAYMENT_MAX_USDT0: z.coerce.number().positive().max(10).default(0.1),
@@ -44,25 +88,107 @@ const EnvSchema = z.object({
   FREE_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(60),
   PAID_RATE_LIMIT_PER_HOUR: z.coerce.number().int().positive().default(6),
   GLOBAL_RUN_LIMIT_PER_DAY: z.coerce.number().int().positive().default(100),
-  FIXTURE_BASE_DOMAIN: z.string().min(3).optional().or(z.literal("").transform(() => undefined)),
+  BACKEND_REPLICA_COUNT: z.coerce.number().int().positive().default(1),
+  FIXTURE_HEALTHY_URL: optionalUrl,
+  FIXTURE_INVALID_OUTPUT_URL: optionalUrl,
+  FIXTURE_SCHEMA_DRIFT_URL: optionalUrl,
+  FIXTURE_TIMEOUT_URL: optionalUrl,
   FIXTURE_HEALTHY_PROVIDER_ADDRESS: optionalAddress,
   FIXTURE_INVALID_OUTPUT_PROVIDER_ADDRESS: optionalAddress,
   FIXTURE_SCHEMA_DRIFT_PROVIDER_ADDRESS: optionalAddress,
   FIXTURE_TIMEOUT_PROVIDER_ADDRESS: optionalAddress,
   ALLOW_LOCAL_UNPAID_RUNS: bool,
   ALLOW_PRIVATE_TARGETS: bool,
+  PUBLIC_ALLOWED_ORIGINS: z.string().default(""),
 });
 
 export type Config = ReturnType<typeof loadConfig>;
 
 export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
   const parsed = EnvSchema.parse(source);
-  // chainReady: can publish to registry without x402 — works on testnet too
+  if (!parsed.XLAYER_TESTNET) {
+    throw new Error("X Layer mainnet is unsupported; LaunchProof must run on X Layer Testnet");
+  }
+  const expectedChainId = XLAYER_TESTNET_CHAIN_ID;
+  const chainId = parsed.XLAYER_CHAIN_ID ?? expectedChainId;
+  if (chainId !== expectedChainId) {
+    throw new Error(`XLAYER_CHAIN_ID must be ${expectedChainId} when XLAYER_TESTNET=${parsed.XLAYER_TESTNET}`);
+  }
+  const expectedNetwork = `eip155:${chainId}` as const;
+  if (parsed.XLAYER_NETWORK && parsed.XLAYER_NETWORK !== expectedNetwork) {
+    throw new Error(`XLAYER_NETWORK must be ${expectedNetwork} for chain ${chainId}`);
+  }
+  if (parsed.XLAYER_USDT0_ADDRESS && parsed.XLAYER_USDT0_ADDRESS.toLowerCase() !== XLAYER_TESTNET_USDT0_ADDRESS) {
+    throw new Error(`XLAYER_USDT0_ADDRESS must be the official X Layer Testnet USD₮0 contract ${XLAYER_TESTNET_USDT0_ADDRESS}`);
+  }
+  const chain: XLayerProfile = Object.freeze({
+    id: chainId,
+    network: expectedNetwork,
+    name: "X Layer Testnet",
+    testnet: true,
+    rpcUrl: parsed.XLAYER_RPC_URL,
+    fallbackRpcUrl: parsed.XLAYER_FALLBACK_RPC_URL,
+    explorerUrl:
+      parsed.XLAYER_EXPLORER_URL ??
+      "https://www.okx.com/web3/explorer/xlayer-test",
+    usdt0Address: (parsed.XLAYER_USDT0_ADDRESS ??
+      XLAYER_TESTNET_USDT0_ADDRESS) as `0x${string}`,
+    usdt0Decimals: 6,
+  });
+  const fixtureUrls = {
+    healthy: parsed.FIXTURE_HEALTHY_URL,
+    "invalid-output": parsed.FIXTURE_INVALID_OUTPUT_URL,
+    "schema-drift": parsed.FIXTURE_SCHEMA_DRIFT_URL,
+    timeout: parsed.FIXTURE_TIMEOUT_URL,
+  } as const;
+  const fixtureAddresses = {
+    healthy: parsed.FIXTURE_HEALTHY_PROVIDER_ADDRESS,
+    "invalid-output": parsed.FIXTURE_INVALID_OUTPUT_PROVIDER_ADDRESS,
+    "schema-drift": parsed.FIXTURE_SCHEMA_DRIFT_PROVIDER_ADDRESS,
+    timeout: parsed.FIXTURE_TIMEOUT_PROVIDER_ADDRESS,
+  } as const;
+  const targetAllowlist = new Set(
+    parsed.TARGET_ALLOWLIST.split(",")
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  const configuredAddresses = [
+    parsed.REGISTRY_ADDRESS,
+    parsed.PAYOUT_ADDRESS,
+    ...Object.values(fixtureAddresses),
+  ].filter((address): address is string => Boolean(address));
+  if (configuredAddresses.some((address) => /^0x0{40}$/i.test(address))) {
+    throw new Error("Configured registry, payout, and provider roles must use nonzero addresses");
+  }
+  if ([parsed.REGISTRY_WRITER_PRIVATE_KEY, parsed.TARGET_PAYER_PRIVATE_KEY].some((key) => key && /^0x0{64}$/i.test(key))) {
+    throw new Error("Configured registry writer and target payer keys must be nonzero");
+  }
+  const chainRequested = Boolean(
+    parsed.XLAYER_RPC_URL ||
+      parsed.REGISTRY_ADDRESS ||
+      parsed.REGISTRY_DEPLOYMENT_BLOCK > 0n ||
+      parsed.REGISTRY_WRITER_PRIVATE_KEY ||
+      parsed.REGISTRY_RUNTIME_CODE_HASH,
+  );
+  if (
+    chainRequested &&
+    (!parsed.XLAYER_RPC_URL ||
+      !parsed.REGISTRY_ADDRESS ||
+      parsed.REGISTRY_DEPLOYMENT_BLOCK === 0n ||
+      !parsed.REGISTRY_WRITER_PRIVATE_KEY ||
+      !parsed.REGISTRY_RUNTIME_CODE_HASH)
+  ) {
+    throw new Error(
+      "Chain publication requires XLAYER_RPC_URL, REGISTRY_ADDRESS, REGISTRY_DEPLOYMENT_BLOCK, REGISTRY_WRITER_PRIVATE_KEY, and REGISTRY_RUNTIME_CODE_HASH",
+    );
+  }
+  // chainReady means startup preflight can prove the exact deployment before any publication.
   const chainReady = Boolean(
     parsed.XLAYER_RPC_URL &&
       parsed.REGISTRY_ADDRESS &&
       parsed.REGISTRY_DEPLOYMENT_BLOCK > 0n &&
-      parsed.REGISTRY_WRITER_PRIVATE_KEY,
+      parsed.REGISTRY_WRITER_PRIVATE_KEY &&
+      parsed.REGISTRY_RUNTIME_CODE_HASH,
   );
   const productionReady = Boolean(
     parsed.X402_ENABLED &&
@@ -71,13 +197,14 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
       parsed.REGISTRY_ADDRESS &&
       parsed.REGISTRY_DEPLOYMENT_BLOCK > 0n &&
       parsed.REGISTRY_WRITER_PRIVATE_KEY &&
+      parsed.REGISTRY_RUNTIME_CODE_HASH &&
       parsed.TARGET_PAYER_PRIVATE_KEY &&
       parsed.PAYOUT_ADDRESS &&
       parsed.DATABASE_URL &&
       parsed.OKX_API_KEY &&
       parsed.OKX_SECRET_KEY &&
       parsed.OKX_PASSPHRASE &&
-      parsed.FIXTURE_BASE_DOMAIN &&
+      Object.values(fixtureUrls).every(Boolean) &&
       parsed.FIXTURE_HEALTHY_PROVIDER_ADDRESS &&
       parsed.FIXTURE_INVALID_OUTPUT_PROVIDER_ADDRESS &&
       parsed.FIXTURE_SCHEMA_DRIFT_PROVIDER_ADDRESS &&
@@ -85,15 +212,47 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
   );
   if (parsed.NODE_ENV === "production" && !productionReady) {
     throw new Error(
-      "Production startup refused: x402 facilitator, payout wallet, registry writer, RPC, registry, database, and fixture domain are required",
+      "Production startup refused: x402 facilitator, payout wallet, registry writer, RPC, registry, database, and four explicit fixture URLs/identities are required",
     );
+  }
+  if (productionReady) {
+    const providers = Object.values(fixtureAddresses).map((address) => address!.toLowerCase());
+    if (new Set(providers).size !== providers.length) {
+      throw new Error("Each controlled fixture must use a distinct provider declaration address");
+    }
+    const missingTargetHost = Object.values(fixtureUrls).find((fixtureUrl) =>
+      fixtureUrl && !targetAllowlist.has(new URL(fixtureUrl).hostname.toLowerCase())
+    );
+    if (missingTargetHost) throw new Error("TARGET_ALLOWLIST must include every controlled fixture hostname");
   }
   if (parsed.NODE_ENV === "production" && parsed.ALLOW_LOCAL_UNPAID_RUNS) {
     throw new Error("ALLOW_LOCAL_UNPAID_RUNS is forbidden in production");
   }
+  if (parsed.NODE_ENV === "production" && parsed.ALLOW_PRIVATE_TARGETS) {
+    throw new Error("ALLOW_PRIVATE_TARGETS is forbidden in production");
+  }
+  const apiIsLoopback = isLoopbackUrl(parsed.PUBLIC_API_BASE_URL);
+  const webIsLoopback = isLoopbackUrl(parsed.PUBLIC_WEB_BASE_URL);
+  if (parsed.NODE_ENV === "development" && (!apiIsLoopback || !webIsLoopback || chainReady || parsed.X402_ENABLED)) {
+    throw new Error("Public, chain-ready, and x402 services must run with NODE_ENV=production");
+  }
+  if (parsed.ALLOW_LOCAL_UNPAID_RUNS && (!apiIsLoopback || parsed.X402_ENABLED)) {
+    throw new Error("ALLOW_LOCAL_UNPAID_RUNS requires a loopback API URL and X402_ENABLED=false");
+  }
+  if (parsed.ALLOW_PRIVATE_TARGETS && (!apiIsLoopback || !parsed.ALLOW_LOCAL_UNPAID_RUNS)) {
+    throw new Error("ALLOW_PRIVATE_TARGETS is allowed only for an explicitly unpaid loopback development service");
+  }
+  if (parsed.BACKEND_REPLICA_COUNT !== 1) {
+    throw new Error("LaunchProof currently requires exactly one backend replica for writer and recovery safety");
+  }
+  if (chainReady && !/^[0-9a-f]{40}$/i.test(parsed.BUILD_COMMIT_SHA)) {
+    throw new Error("BUILD_COMMIT_SHA must be the immutable 40-character commit used for this chain-published build");
+  }
   if (parsed.NODE_ENV === "production") {
     if (!/^[0-9a-f]{40}$/i.test(parsed.BUILD_COMMIT_SHA)) throw new Error("BUILD_COMMIT_SHA must be an immutable 40-character commit in production");
-    if (parsed.SOURCE_REPOSITORY.includes("your-org")) throw new Error("SOURCE_REPOSITORY must be the real public repository in production");
+    if (!/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/i.test(parsed.SOURCE_REPOSITORY)) {
+      throw new Error("SOURCE_REPOSITORY must be a real public GitHub repository in production");
+    }
     if (!parsed.PUBLIC_API_BASE_URL.startsWith("https://") || !parsed.PUBLIC_WEB_BASE_URL.startsWith("https://")) {
       throw new Error("Production public URLs must use HTTPS");
     }
@@ -103,22 +262,40 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
   }
   return {
     ...parsed,
+    chain,
+    fixtureUrls,
+    fixtureAddresses,
     productionReady,
     chainReady,
-    targetAllowlist: new Set(
-      parsed.TARGET_ALLOWLIST.split(",")
-        .map((value) => value.trim().toLowerCase())
-        .filter(Boolean),
+    paymentReady: parsed.NODE_ENV === "production" && productionReady && chain.testnet,
+    publicAllowedOrigins: new Set(
+      [parsed.PUBLIC_WEB_BASE_URL, ...parsed.PUBLIC_ALLOWED_ORIGINS.split(",")]
+        .map((value) => normalizeOrigin(value))
+        .filter((value): value is string => Boolean(value)),
     ),
+    targetAllowlist,
   };
 }
 
-// Mainnet constants (eip155:196). Testnet uses eip155:195 but x402 is not
-// available on testnet — payment gates will be not_tested in testnet mode.
-export const NETWORK = `eip155:${process.env.NEXT_PUBLIC_CHAIN_ID ?? "196"}`;
-export const TESTNET_CHAIN_ID = 1952;
-export const CHAIN_ID = Number.parseInt(process.env.NEXT_PUBLIC_CHAIN_ID ?? "196", 10);
-export const USDT0_ADDRESS = "0x779ded0c9e1022225f8e0630b35a9b54be713736" as const;
 export const GENESIS_PRICE = "$0.01";
 export const RENEWAL_PRICE = "$0.10";
+export const GENESIS_AMOUNT = "0.01";
+export const RENEWAL_AMOUNT = "0.10";
+export const GENESIS_AMOUNT_ATOMIC = "10000";
+export const RENEWAL_AMOUNT_ATOMIC = "100000";
 export const MAX_EVIDENCE_BYTES = 65_536;
+
+function normalizeOrigin(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    return new URL(trimmed).origin;
+  } catch {
+    throw new Error(`Invalid origin in PUBLIC_ALLOWED_ORIGINS: ${trimmed}`);
+  }
+}
+
+function isLoopbackUrl(rawUrl: string): boolean {
+  const hostname = new URL(rawUrl).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return hostname === "localhost" || hostname === "::1" || /^127(?:\.[0-9]{1,3}){3}$/.test(hostname);
+}

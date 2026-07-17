@@ -13,7 +13,14 @@ interface Vm {
 contract Deploy {
     Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
+    error UnexpectedChain(uint256 expected, uint256 actual);
+
     function run() external returns (LaunchProofRegistry registry) {
+        uint256 expectedChainId = vm.envUint("XLAYER_CHAIN_ID");
+        if (block.chainid != expectedChainId) {
+            revert UnexpectedChain(expectedChainId, block.chainid);
+        }
+
         address writer = vm.envAddress("REGISTRY_WRITER_ADDRESS");
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         vm.startBroadcast(deployerKey);
