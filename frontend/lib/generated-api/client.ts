@@ -146,29 +146,40 @@ export async function pollRun(
 
 declare global {
   interface Window {
-    ethereum?: {
-      request(args: { method: string; params?: unknown[] | object }): Promise<unknown>;
-    };
+    ethereum?: InjectedEvmProvider;
+    okxwallet?: InjectedEvmProvider;
   }
+}
+
+interface InjectedEvmProvider {
+  request(args: { method: string; params?: unknown[] | object }): Promise<unknown>;
+}
+
+function getInjectedEvmProvider(): InjectedEvmProvider | undefined {
+  if (typeof window === "undefined") return undefined;
+  if (typeof window.okxwallet?.request === "function") return window.okxwallet;
+  if (typeof window.ethereum?.request === "function") return window.ethereum;
+  return undefined;
 }
 
 export async function connectWallet(projectCard: ProjectCard): Promise<`0x${string}`> {
   assertTestnetPaymentAnchors(projectCard);
   const { chain } = projectCard;
-  if (!window.ethereum) throw new Error("Install or open an EVM wallet to approve the x402 payment.");
-  const accounts = (await window.ethereum.request({ method: "eth_requestAccounts" })) as string[];
+  const provider = getInjectedEvmProvider();
+  if (!provider) throw new Error("Install or unlock OKX Wallet (or another EVM wallet) to approve the x402 payment.");
+  const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
   const account = accounts[0];
   if (!isAddress(account)) throw new Error("The wallet did not return a valid account.");
 
   const targetChainHex = `0x${chain.id.toString(16)}`;
-  const chainId = (await window.ethereum.request({ method: "eth_chainId" })) as string;
+  const chainId = (await provider.request({ method: "eth_chainId" })) as string;
   if (Number.parseInt(chainId, 16) !== chain.id) {
     try {
-      await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: targetChainHex }] });
+      await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: targetChainHex }] });
     } catch (cause) {
       const code = isObject(cause) ? Number(cause.code) : Number.NaN;
       if (code !== 4902) throw cause;
-      await window.ethereum.request({
+      await provider.request({
         method: "wallet_addEthereumChain",
         params: [{
           chainId: targetChainHex,
@@ -179,7 +190,7 @@ export async function connectWallet(projectCard: ProjectCard): Promise<`0x${stri
         }],
       });
     }
-    const selectedChainId = Number.parseInt(await window.ethereum.request({ method: "eth_chainId" }) as string, 16);
+    const selectedChainId = Number.parseInt(await provider.request({ method: "eth_chainId" }) as string, 16);
     if (selectedChainId !== chain.id) throw new Error(`Wallet network mismatch: expected chain ${chain.id}.`);
   }
   return account;
@@ -239,7 +250,8 @@ async function submitWithPayment(input: {
   if (!chain.testnet) throw new Error("Paid execution refused: this LaunchProof deployment is not configured as testnet.");
   if (!chain.registry_address) throw new Error("Paid execution refused: the public testnet registry is not configured.");
   if (!chain.registry_runtime_code_hash) throw new Error("Paid execution refused: the registry runtime code hash is not configured.");
-  if (!window.ethereum || !input.account) throw new Error("Connect a wallet before approving payment.");
+  const provider = getInjectedEvmProvider();
+  if (!provider || !input.account) throw new Error("Connect a wallet before approving payment.");
   if (!payments.pay_to) throw new Error("The public payment recipient is not configured.");
 
   const expectedAmount = input.previousRunId ? payments.renewal_amount_atomic : payments.genesis_amount_atomic;
@@ -255,7 +267,7 @@ async function submitWithPayment(input: {
     blockExplorers: { default: { name: "Configured explorer", url: chain.explorer_url } },
     testnet: chain.testnet,
   });
-  const wallet = createWalletClient({ account: input.account, chain: activeChain, transport: custom(window.ethereum) });
+  const wallet = createWalletClient({ account: input.account, chain: activeChain, transport: custom(provider) });
   const signer = toClientEvmSigner({
     address: input.account,
     signTypedData: async (message) =>
