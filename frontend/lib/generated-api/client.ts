@@ -148,6 +148,7 @@ declare global {
   interface Window {
     ethereum?: InjectedEvmProvider;
     okxwallet?: InjectedEvmProvider;
+    __launchproofWalletPageActive?: boolean;
   }
 }
 
@@ -166,11 +167,27 @@ function getInjectedEvmProvider(): InjectedEvmProvider | undefined {
   return undefined;
 }
 
-export async function connectWallet(projectCard: ProjectCard): Promise<`0x${string}`> {
+export async function connectWallet(projectCard: ProjectCard, requestAccountSelection = false): Promise<`0x${string}`> {
   assertTestnetPaymentAnchors(projectCard);
   const { chain } = projectCard;
   const provider = getInjectedEvmProvider();
   if (!provider) throw new Error("Install or unlock OKX Wallet (or another EVM wallet) to approve the x402 payment.");
+  if (requestAccountSelection) {
+    try {
+      await provider.request({ method: "wallet_revokePermissions", params: [{ eth_accounts: {} }] });
+    } catch (cause) {
+      const code = isObject(cause) ? Number(cause.code) : Number.NaN;
+      if (code === 4001) throw cause;
+    }
+    try {
+      await provider.request({ method: "wallet_requestPermissions", params: [{ eth_accounts: {} }] });
+    } catch (cause) {
+      const code = isObject(cause) ? Number(cause.code) : Number.NaN;
+      if (code === 4001) throw cause;
+      // Some injected wallets implement eth_requestAccounts but not the
+      // permissions methods. The normal request below remains the fallback.
+    }
+  }
   const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
   const account = accounts[0];
   if (!isAddress(account)) throw new Error("The wallet did not return a valid account.");
@@ -212,15 +229,32 @@ export function rememberConnectedWallet(account: `0x${string}`): void {
   }
 }
 
+export async function forgetConnectedWallet(): Promise<void> {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(CONNECTED_WALLET_SESSION_KEY);
+  } catch {
+    // The in-memory UI is still disconnected by the caller.
+  }
+  const provider = getInjectedEvmProvider();
+  try {
+    await provider?.request({ method: "wallet_revokePermissions", params: [{ eth_accounts: {} }] });
+  } catch {
+    // Revocation is not standardized across every injected EVM wallet. The
+    // LaunchProof session is forgotten even when the provider lacks it.
+  }
+}
+
 export async function restoreConnectedWallet(projectCard: ProjectCard): Promise<`0x${string}` | null> {
   if (typeof window === "undefined") return null;
+  const activePageSession = walletPageSessionContinues();
   let priorConnection: string | null;
   try {
     priorConnection = window.sessionStorage.getItem(CONNECTED_WALLET_SESSION_KEY);
   } catch {
     return null;
   }
-  if (!priorConnection) return null;
+  if (!priorConnection || !activePageSession) return null;
 
   assertTestnetPaymentAnchors(projectCard);
   const provider = getInjectedEvmProvider();
@@ -241,6 +275,21 @@ export async function restoreConnectedWallet(projectCard: ProjectCard): Promise<
   } catch {
     return null;
   }
+}
+
+function walletPageSessionContinues(): boolean {
+  if (window.__launchproofWalletPageActive) return true;
+  window.__launchproofWalletPageActive = true;
+  const navigation = window.performance?.getEntriesByType?.("navigation")[0] as PerformanceNavigationTiming | undefined;
+  if (!navigation || navigation.type === "reload") return true;
+  // A fresh navigation is a newly opened app session. This also defeats
+  // browsers that restore sessionStorage when reopening a closed tab.
+  try {
+    window.sessionStorage.removeItem(CONNECTED_WALLET_SESSION_KEY);
+  } catch {
+    // Ignore unavailable storage; there is nothing else to restore.
+  }
+  return false;
 }
 
 export function subscribeToInjectedWallet(listener: () => void): () => void {
@@ -316,7 +365,7 @@ async function submitWithPayment(input: {
   const expectedAmount = input.previousRunId ? payments.renewal_amount_atomic : payments.genesis_amount_atomic;
   if (!/^\d+$/.test(expectedAmount)) throw new Error("The public atomic payment amount is invalid.");
 
-  const [{ createWalletClient, custom, defineChain }, { ExactEvmScheme, toClientEvmSigner }, { wrapFetchWithPaymentFromConfig }] =
+  const [{ createWalletClient, custom, defineChain }, { ExactEvmScheme, toClientEvmSigner }, { decodePaymentResponseHeader, wrapFetchWithPaymentFromConfig }] =
     await Promise.all([import("viem"), import("@okxweb3/x402-evm"), import("@okxweb3/x402-fetch")]);
   const activeChain = defineChain({
     id: chain.id,
@@ -349,11 +398,24 @@ async function submitWithPayment(input: {
     })],
   });
 
-  return paidFetch(`${API_BASE}${input.route}`, {
+  const response = await paidFetch(`${API_BASE}${input.route}`, {
     method: "POST",
     headers: { "content-type": "application/json", "idempotency-key": input.idempotencyKey },
     body: input.body,
   });
+  if (response.status === 402) {
+    const encodedResult = response.headers.get("payment-response");
+    if (encodedResult) {
+      try {
+        const result = decodePaymentResponseHeader(encodedResult);
+        const detail = result.errorMessage ?? result.errorReason;
+        if (detail) throw new Error(`x402 payment was not finalized: ${detail}`);
+      } catch (cause) {
+        if (cause instanceof Error && cause.message.startsWith("x402 payment was not finalized:")) throw cause;
+      }
+    }
+  }
+  return response;
 }
 
 export function withoutResponseOnlyCorsHeaders(fetchImplementation: typeof fetch): typeof fetch {

@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   assertTestnetPaymentAnchors,
+  connectWallet,
   filterExactPaymentRequirements,
+  forgetConnectedWallet,
   rememberConnectedWallet,
   restoreConnectedWallet,
   withoutResponseOnlyCorsHeaders,
@@ -116,6 +118,50 @@ describe("frontend testnet payment policy", () => {
     rememberConnectedWallet(account);
     expect(await restoreConnectedWallet(projectCard())).toBe(account);
     expect(request.mock.calls.map(([input]) => input.method)).toEqual(["eth_accounts", "eth_chainId"]);
+  });
+
+  it("forgets restored storage on a newly opened app session", async () => {
+    const stored = new Map([["launchproof.connected-wallet.v1", `0x${"55".repeat(20)}`]]);
+    const request = vi.fn();
+    vi.stubGlobal("window", {
+      okxwallet: { request },
+      performance: { getEntriesByType: () => [{ type: "navigate" }] },
+      sessionStorage: {
+        getItem: (key: string) => stored.get(key) ?? null,
+        setItem: (key: string, value: string) => stored.set(key, value),
+        removeItem: (key: string) => stored.delete(key),
+      },
+    });
+    expect(await restoreConnectedWallet(projectCard())).toBeNull();
+    expect(stored.size).toBe(0);
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("revokes the existing permission before requesting a different OKX account", async () => {
+    const stored = new Map<string, string>();
+    const account = `0x${"66".repeat(20)}` as `0x${string}`;
+    const request = vi.fn(async ({ method }: { method: string }) => {
+      if (method === "wallet_revokePermissions" || method === "wallet_requestPermissions") return [];
+      if (method === "eth_requestAccounts") return [account];
+      if (method === "eth_chainId") return "0x7a0";
+      throw new Error(`Unexpected method ${method}`);
+    });
+    vi.stubGlobal("window", {
+      okxwallet: { request },
+      sessionStorage: {
+        getItem: (key: string) => stored.get(key) ?? null,
+        setItem: (key: string, value: string) => stored.set(key, value),
+        removeItem: (key: string) => stored.delete(key),
+      },
+    });
+    expect(await connectWallet(projectCard(), true)).toBe(account);
+    expect(request.mock.calls.map(([input]) => input.method)).toEqual([
+      "wallet_revokePermissions", "wallet_requestPermissions", "eth_requestAccounts", "eth_chainId",
+    ]);
+    rememberConnectedWallet(account);
+    await forgetConnectedWallet();
+    expect(stored.size).toBe(0);
+    expect(request.mock.calls.at(-1)?.[0].method).toBe("wallet_revokePermissions");
   });
 
   it("removes the response-only CORS header from an OKX paid retry", async () => {

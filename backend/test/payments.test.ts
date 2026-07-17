@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { PaymentRequirements, SettleResponse } from "@okxweb3/x402-core/types";
 import { loadConfig } from "../src/config.js";
 import { MemoryRepository } from "../src/db/store.js";
-import { rehearsalTargetSchemaFor, requireBoundIdempotencyKey, settledPaymentReference } from "../src/payments/inbound.js";
+import { rehearsalTargetSchemaFor, requireBoundIdempotencyKey, settledPaymentReference, settlementProgress } from "../src/payments/inbound.js";
 import { RehearsalService } from "../src/workers/rehearsal.js";
 
 const payout = `0x${"34".repeat(20)}` as const;
@@ -83,6 +83,21 @@ describe("settled LaunchProof payment references", () => {
       "/api/rehearsals",
       async () => blockTimestamp,
     )).rejects.toThrow(/payment policy/);
+  });
+
+  it("durably captures an OKX timeout transaction for authenticated status polling", () => {
+    expect(settlementProgress(
+      config,
+      settlement({ status: "timeout" }),
+      requirements(),
+      "/api/rehearsals",
+    )).toMatchObject({ transaction_hash: transaction, payer, amount_atomic: "10000" });
+    expect(() => settlementProgress(
+      config,
+      settlement({ status: "pending" }),
+      requirements(),
+      "/api/rehearsals",
+    )).toThrow(/recoverable transaction/);
   });
 
   it("reconstructs the exact same immutable reference for a same-transaction retry", async () => {

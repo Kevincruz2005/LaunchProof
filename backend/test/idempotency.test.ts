@@ -110,4 +110,27 @@ describe("atomic run reservation", () => {
     await repository.authorizeRun(payment, run.run_id, capacity);
     expect((await repository.getRun(run.run_id))?.state).toBe("payment_settled");
   });
+
+  it("attaches a proven transaction to an ambiguous attempt that lost its timeout result", async () => {
+    const repository = new MemoryRepository();
+    const config = loadConfig({ NODE_ENV: "test" });
+    const service = new RehearsalService(config, repository);
+    const run = await service.reserve("https://fixture.example", "lost-timeout-settlement");
+    const capacity = { since: "2026-01-01T00:00:00.000Z", limit: 1 };
+    await repository.claimRunCapacity(run.run_id, capacity, "2099-01-01T00:00:00.000Z");
+    await repository.markPaymentAmbiguous(run.run_id, "facilitator timeout result was not retained");
+    const candidate = {
+      transaction_hash: `0x${"cd".repeat(32)}`,
+      payer: `0x${"12".repeat(20)}`,
+      amount_atomic: "10000",
+      route: "/api/rehearsals",
+      observed_at: "2026-07-17T00:00:00.000Z",
+    };
+    await repository.recordPaymentSettlement(run.run_id, candidate);
+    expect((await repository.pendingPaymentSettlements())[0]?.settlement).toEqual(candidate);
+    await expect(repository.recordPaymentSettlement(run.run_id, {
+      ...candidate,
+      transaction_hash: `0x${"ef".repeat(32)}`,
+    })).rejects.toThrow(/immutable/);
+  });
 });

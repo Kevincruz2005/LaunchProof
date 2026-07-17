@@ -104,6 +104,7 @@ export function createPaymentMiddleware(
     "POST /mcp/renew": route(config, RENEWAL_AMOUNT_ATOMIC, payTo, "Renew Service Passport MCP"),
   };
   const httpServer = new x402HTTPResourceServer(server, routes);
+  httpServer.setPollDeadline(15_000);
   const inFlight = new Set<string>();
   const attempts = new Map<string, PaymentAttempt>();
   const cleanupAttempt = (fingerprint: string, attempt: PaymentAttempt | undefined) => {
@@ -209,7 +210,7 @@ export function createPaymentMiddleware(
     if (attempt?.claimed) {
       await repository.markPaymentAmbiguous(
         attempt.runId,
-        "Settlement was attempted but its final on-chain transfer was not proven",
+        `Settlement was attempted but its final on-chain transfer was not proven: ${context.error.message}`,
       );
     }
     cleanupAttempt(fingerprint, attempt);
@@ -226,7 +227,34 @@ export function createPaymentMiddleware(
     const reserved = await repository.getByIdempotencyKey(key);
     if (!reserved || reserved.run_id !== attempt.runId) throw new Error("Settled request has no correlated durable run reservation");
     const settlement = settlementProgress(config, context.result, context.requirements, transport.request.path);
+    // OKX can return success=true/status=timeout with a real transaction hash
+    // before X Layer indexes the transfer. Persist that candidate first, then
+    // use the SDK's authenticated settle/status polling instead of rejecting a
+    // payment that is already on chain.
     await repository.recordPaymentSettlement(reserved.run_id, settlement);
+    if (context.result.status === "timeout") {
+      process.stdout.write(JSON.stringify({
+        event: "x402_settlement_polling",
+        transaction: context.result.transaction,
+        network: context.result.network,
+      }) + "\n");
+      const finalStatus = await server.pollSettleStatus(
+        context.result.transaction,
+        context.paymentPayload,
+        context.requirements,
+        15_000,
+      );
+      if (finalStatus !== "success") {
+        throw new Error(`LaunchProof x402 settlement remained ${finalStatus} after status polling`);
+      }
+      context.result.success = true;
+      context.result.status = "success";
+      process.stdout.write(JSON.stringify({
+        event: "x402_settlement_recovered",
+        transaction: context.result.transaction,
+        network: context.result.network,
+      }) + "\n");
+    }
     const payment = await settledPaymentReference(
       config,
       context.result,
@@ -458,13 +486,15 @@ export async function settledPaymentReference(
   };
 }
 
-function settlementProgress(
+export function settlementProgress(
   config: Config,
   settlement: SettleResponse,
   requirements: PaymentRequirements,
   routePath: string,
 ): SettlementProgress {
-  if (!settlement.success || settlement.status !== "success") throw new Error("LaunchProof x402 settlement is not final");
+  if (!settlement.success || (settlement.status !== "success" && settlement.status !== "timeout")) {
+    throw new Error("LaunchProof x402 settlement did not provide a recoverable transaction");
+  }
   if (settlement.network !== config.chain.network || requirements.network !== config.chain.network) {
     throw new Error("LaunchProof x402 settlement used the wrong network");
   }

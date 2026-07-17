@@ -77,6 +77,7 @@ input:focus { border-color: var(--purple); box-shadow: 0 0 0 3px rgba(93,67,214,
 .wallet-row small { color: var(--gray); font-size: .62rem; font-weight: 850; text-transform: uppercase; letter-spacing: .06em; }
 .wallet-row strong { margin-top: 3px; font-family: "SFMono-Regular", Consolas, monospace; font-size: .72rem; }
 .wallet-row .secondary { flex: 0 0 auto; }
+.wallet-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .run-policy { margin: 0 0 16px; color: var(--gray); font-size: .65rem; overflow-wrap: anywhere; }
 .saved-run-note { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; padding: 10px 12px; border: 1px solid #cfc6f0; border-radius: 9px; background: #f3f0ff; color: #4b3a86; font-size: .66rem; font-weight: 700; }
 .saved-run-note button { flex: 0 0 auto; border: 0; background: transparent; color: var(--purple); cursor: pointer; font-weight: 850; text-decoration: underline; text-underline-offset: 3px; }

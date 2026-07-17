@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   clearPendingRun,
   connectWallet,
+  forgetConnectedWallet,
   getProjectCard,
   loadPendingRun,
   pollRun,
@@ -146,12 +147,12 @@ export function RehearsalForm({ expanded = false }: { expanded?: boolean }) {
     }
   }
 
-  async function connect() {
+  async function connect(requestAccountSelection = false) {
     if (!projectCard) return;
     setError(null);
     setState("connecting_wallet");
     try {
-      const connectedAccount = await connectWallet(projectCard);
+      const connectedAccount = await connectWallet(projectCard, requestAccountSelection);
       rememberConnectedWallet(connectedAccount);
       setAccount(connectedAccount);
       setState("idle");
@@ -159,6 +160,14 @@ export function RehearsalForm({ expanded = false }: { expanded?: boolean }) {
       setState("failed");
       setError(cause instanceof Error ? cause.message : "Wallet connection failed");
     }
+  }
+
+  async function disconnect() {
+    setError(null);
+    setState("connecting_wallet");
+    await forgetConnectedWallet();
+    setAccount(null);
+    setState("idle");
   }
 
   async function submit(event: React.FormEvent) {
@@ -232,7 +241,10 @@ export function RehearsalForm({ expanded = false }: { expanded?: boolean }) {
         {paymentMode === "paid" ? (
           <div className="wallet-row">
             <div><small>Wallet · this tab</small><strong>{account ? shortAddress(account) : "Not connected"}</strong></div>
-            <button className="secondary" disabled={busy || !paidReady} type="button" onClick={() => void connect()}>{account ? "Change wallet" : "Connect wallet"}</button>
+            <div className="wallet-actions">
+              <button className="secondary" disabled={busy || !paidReady} type="button" onClick={() => void connect(Boolean(account))}>{account ? "Change wallet" : "Connect wallet"}</button>
+              {account ? <button className="secondary" disabled={busy} type="button" onClick={() => void disconnect()}>Disconnect</button> : null}
+            </div>
           </div>
         ) : <p className="local-note">Local mode is development-only. Its Passport and receipt must remain marked unpaid/local.</p>}
 

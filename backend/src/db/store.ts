@@ -259,8 +259,12 @@ export class MemoryRepository implements Repository {
     return this.authorizationLock(async () => {
       const current = this.runs.get(runId);
       if (!current || "canonical_evidence" in current) throw new Error("Cannot record settlement for a missing or finalized run");
-      if (current.state === "payment_ambiguous" && sameSettlement(current.settlement, settlement)) return;
-      if (current.state !== "settlement_claimed") throw new Error("Settlement has no durable capacity claim");
+      if (current.state === "payment_ambiguous") {
+        if (sameSettlement(current.settlement, settlement)) return;
+        if (current.settlement) throw new Error("Settlement transaction is immutable");
+      } else if (current.state !== "settlement_claimed") {
+        throw new Error("Settlement has no durable capacity claim");
+      }
       this.runs.set(runId, {
         ...current,
         state: "payment_ambiguous",

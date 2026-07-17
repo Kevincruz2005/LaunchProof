@@ -40,6 +40,7 @@ export function createApp(
   const service = new RehearsalService(config, repository);
   const registry = new RegistryService(config);
   app.disable("x-powered-by");
+  if (config.NODE_ENV === "production") app.set("trust proxy", 1);
   app.use(cors({
     origin: (origin, callback) => {
       if (!origin || allowedOrigin(origin, config.publicAllowedOrigins)) return callback(null, true);

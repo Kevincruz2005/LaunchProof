@@ -351,8 +351,12 @@ export class PrismaRepository implements Repository {
       if (!row) throw new Error("Cannot record settlement for a missing run");
       const progress = row.record as unknown as StoredRun;
       if (isRunRecord(progress)) throw new Error("Cannot record settlement for a finalized run");
-      if (progress.state === "payment_ambiguous" && sameSettlement(progress.settlement, settlement)) return;
-      if (progress.state !== "settlement_claimed") throw new Error("Settlement has no durable capacity claim");
+      if (progress.state === "payment_ambiguous") {
+        if (sameSettlement(progress.settlement, settlement)) return;
+        if (progress.settlement) throw new Error("Settlement transaction is immutable");
+      } else if (progress.state !== "settlement_claimed") {
+        throw new Error("Settlement has no durable capacity claim");
+      }
       const ambiguous: RunProgress = {
         ...progress,
         state: "payment_ambiguous",
