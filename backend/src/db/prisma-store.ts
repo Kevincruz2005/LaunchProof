@@ -16,7 +16,9 @@ function json(value: unknown): Prisma.InputJsonValue {
 }
 
 export class PrismaRepository implements Repository {
-  constructor(private readonly client = new PrismaClient()) {}
+  constructor(private readonly client = new PrismaClient({
+    transactionOptions: { maxWait: 10_000, timeout: 30_000 },
+  })) {}
 
   async createProgress(progress: RunProgress): Promise<StoredRun> {
     return this.client.$transaction(async (transaction) => {

@@ -26,13 +26,21 @@ async function main() {
   if (targetPaymentsReconciled > 0) {
     process.stdout.write(JSON.stringify({ event: "target_payments_reconciled", records: targetPaymentsReconciled }) + "\n");
   }
-  const recovered = await new RehearsalService(config, repository).recoverPendingRuns();
-  if (recovered > 0) process.stdout.write(JSON.stringify({ event: "runs_recovered", records: recovered }) + "\n");
   const app = createApp(config, repository, { startupPreflightPassed: true });
   app.listen(config.PORT, "0.0.0.0", () => {
     process.stdout.write(
       JSON.stringify({ event: "server_started", port: config.PORT, build: config.BUILD_COMMIT_SHA, production_ready: config.productionReady }) + "\n",
     );
+    void new RehearsalService(config, repository).recoverPendingRuns()
+      .then((recovered) => {
+        if (recovered > 0) process.stdout.write(JSON.stringify({ event: "runs_recovered", records: recovered }) + "\n");
+      })
+      .catch((error: unknown) => {
+        process.stderr.write(JSON.stringify({
+          event: "run_recovery_failed",
+          error_type: error instanceof Error ? error.name : "UnknownError",
+        }) + "\n");
+      });
   });
 }
 
