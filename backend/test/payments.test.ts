@@ -4,7 +4,7 @@ import { loadConfig } from "../src/config.js";
 import { MemoryRepository } from "../src/db/store.js";
 import { rehearsalTargetSchemaFor, requireBoundIdempotencyKey, settledPaymentReference, settlementProgress } from "../src/payments/inbound.js";
 import { RehearsalService } from "../src/workers/rehearsal.js";
-import { normalizeTargetPaymentRequest } from "../src/payments/target.js";
+import { normalizeTargetPaymentRequest, targetReceiptAmountMatches } from "../src/payments/target.js";
 
 const payout = `0x${"34".repeat(20)}` as const;
 const transaction = `0x${"ab".repeat(32)}` as const;
@@ -79,6 +79,13 @@ describe("settled LaunchProof payment references", () => {
     );
     expect(reference.amount_atomic).toBe("10000");
     expect(reference.settlement_transaction).toBe(transaction);
+  });
+
+  it("accepts a nullable amount in a final OKX target receipt", () => {
+    expect(targetReceiptAmountMatches(null, 10_000n)).toBe(true);
+    expect(targetReceiptAmountMatches(undefined, 10_000n)).toBe(true);
+    expect(targetReceiptAmountMatches("10000", 10_000n)).toBe(true);
+    expect(targetReceiptAmountMatches("9999", 10_000n)).toBe(false);
   });
 
   it("fails closed for a pending result or mismatched policy", async () => {

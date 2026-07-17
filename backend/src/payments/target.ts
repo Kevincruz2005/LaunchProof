@@ -154,7 +154,10 @@ export class TargetPaymentService {
     const receipt = decodePaymentResponseHeader(receiptHeader);
     if (!receipt.success || (receipt.status && receipt.status !== "success")) throw new Error("Target x402 settlement is not final");
     if (receipt.network !== this.config.chain.network) throw new Error("Target receipt used the wrong network");
-    if (receipt.amount !== undefined && BigInt(receipt.amount) !== amount) throw new Error("Target receipt amount does not match signed terms");
+    // The OKX exact facilitator may return a final receipt with an optional
+    // amount encoded as null. The signed authorization and the on-chain
+    // transfer remain the authoritative amount checks in that case.
+    if (!targetReceiptAmountMatches(receipt.amount, amount)) throw new Error("Target receipt amount does not match signed terms");
     const transaction = receipt.transaction;
     if (!/^0x[0-9a-fA-F]{64}$/.test(transaction)) throw new Error("Target receipt omitted settlement transaction");
     if (!receipt.payer || !/^0x[0-9a-fA-F]{40}$/.test(receipt.payer) ||
@@ -238,6 +241,10 @@ export class TargetPaymentService {
       };
     }
   }
+}
+
+export function targetReceiptAmountMatches(receiptAmount: string | null | undefined, expected: bigint): boolean {
+  return receiptAmount == null || BigInt(receiptAmount) === expected;
 }
 
 export async function normalizeTargetPaymentRequest(
