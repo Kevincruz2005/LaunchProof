@@ -1,10 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
-const [file, mode = "example"] = process.argv.slice(2);
-if (!file || !new Set(["example", "deployment", "active"]).has(mode)) {
-  throw new Error("usage: validate-parameters.mjs <parameters.json> <example|deployment|active>");
+const [file, mode = "example", ...flags] = process.argv.slice(2);
+if (!file || !new Set(["example", "deployment", "active"]).has(mode) || flags.some((flag) => flag !== "--require-current-head")) {
+  throw new Error("usage: validate-parameters.mjs <parameters.json> <example|deployment|active> [--require-current-head]");
 }
+const requireCurrentHead = flags.includes("--require-current-head");
 
 const parsed = JSON.parse(readFileSync(file, "utf8"));
 const parameters = Object.fromEntries(Object.entries(parsed.parameters ?? {}).map(([name, entry]) => [name, entry.value]));
@@ -44,7 +45,14 @@ if (!/^(?![.])[A-Za-z0-9_.()-]{1,90}(?<![.])$/.test(parameters.containerRegistry
 if (!/^[0-9a-f]{40}$/i.test(parameters.buildCommit)) throw new Error("buildCommit must be a full Git SHA");
 if (!/^[0-9a-f]{40}$/i.test(parameters.fixtureBuildCommit)) throw new Error("fixtureBuildCommit must be a full Git SHA");
 const head = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-if (parameters.buildCommit.toLowerCase() !== head.toLowerCase()) throw new Error("buildCommit must equal the checked-out immutable HEAD");
+try {
+  execFileSync("git", ["merge-base", "--is-ancestor", parameters.buildCommit, "HEAD"], { stdio: "ignore" });
+} catch {
+  throw new Error("buildCommit must be an immutable commit reachable from the checked-out history");
+}
+if (requireCurrentHead && parameters.buildCommit.toLowerCase() !== head.toLowerCase()) {
+  throw new Error("buildCommit must equal the checked-out immutable HEAD when preparing a what-if or apply");
+}
 
 const httpsOrigin = (name) => {
   const url = new URL(parameters[name]);

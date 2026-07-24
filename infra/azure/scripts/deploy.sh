@@ -19,26 +19,26 @@ require_command jq
 
 case "$MODE" in
   foundation)
-    node "${AZURE_DIR}/scripts/validate-parameters.mjs" "$PARAMETERS_FILE" deployment
+    node "${AZURE_DIR}/scripts/validate-parameters.mjs" "$PARAMETERS_FILE" deployment --require-current-head
     overrides=(activationMode=read-only writerCutoverApproved=false deployWorkloads=false deployBackend=false)
     ;;
   fixtures)
-    node "${AZURE_DIR}/scripts/validate-parameters.mjs" "$PARAMETERS_FILE" deployment
+    node "${AZURE_DIR}/scripts/validate-parameters.mjs" "$PARAMETERS_FILE" deployment --require-current-head
     overrides=(activationMode=read-only writerCutoverApproved=false deployWorkloads=true deployBackend=false)
     ;;
   readonly)
-    node "${AZURE_DIR}/scripts/validate-parameters.mjs" "$PARAMETERS_FILE" deployment
+    node "${AZURE_DIR}/scripts/validate-parameters.mjs" "$PARAMETERS_FILE" deployment --require-current-head
     overrides=(activationMode=read-only writerCutoverApproved=false deployWorkloads=true deployBackend=true)
     ;;
   cutover)
-    node "${AZURE_DIR}/scripts/validate-parameters.mjs" "$PARAMETERS_FILE" active
+    node "${AZURE_DIR}/scripts/validate-parameters.mjs" "$PARAMETERS_FILE" active --require-current-head
     [[ "${OLD_WRITER_DISABLED:-}" == "yes" ]] || fail "cutover refused: stop and health-check the Railway writer first, then set OLD_WRITER_DISABLED=yes"
     [[ "${PHASE7_WRITER_CUTOVER_APPROVED:-}" == "I_APPROVE_WRITER_CUTOVER" ]] || fail "cutover requires separate explicit writer approval"
     overrides=(activationMode=active writerCutoverApproved=true deployWorkloads=true deployBackend=true)
     ;;
 esac
 
-"${AZURE_DIR}/scripts/verify-images.sh" "$PARAMETERS_FILE"
+"${AZURE_DIR}/scripts/verify-images.sh" "$PARAMETERS_FILE" --require-current-head
 key_vault_name="$(az deployment group show --resource-group "$RESOURCE_GROUP" --name launchproof-foundation --query properties.outputs.keyVaultName.value --output tsv 2>/dev/null || true)"
 if [[ "$MODE" != "foundation" ]]; then
   [[ -n "$key_vault_name" ]] || fail "foundation deployment output was not found"

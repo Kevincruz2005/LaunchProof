@@ -13,7 +13,7 @@ require_command jq
 activation_mode="$(parameter_value "$PARAMETERS_FILE" activationMode)"
 validation_mode="deployment"
 [[ "$activation_mode" == "active" ]] && validation_mode="active"
-node "${AZURE_DIR}/scripts/validate-parameters.mjs" "$PARAMETERS_FILE" "$validation_mode"
+node "${AZURE_DIR}/scripts/validate-parameters.mjs" "$PARAMETERS_FILE" "$validation_mode" --require-current-head
 if [[ "$(az group exists --name "$RESOURCE_GROUP" --output tsv)" != "true" ]]; then
   fail "resource group '$RESOURCE_GROUP' does not exist; preview resource-group.bicep with 'az deployment sub what-if' after login, but do not create it without Phase 7 approval"
 fi

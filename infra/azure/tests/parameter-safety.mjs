@@ -43,8 +43,10 @@ set("timeoutProviderAddress", `0x${"34".repeat(20)}`);
 const directory = mkdtempSync(join(tmpdir(), "launchproof-azure-"));
 const file = join(directory, "parameters.json");
 const write = (document) => writeFileSync(file, `${JSON.stringify(document, null, 2)}\n`);
-const validate = (mode, shouldPass, message) => {
-  const result = spawnSync(process.execPath, [validator, file, mode], { encoding: "utf8" });
+const validate = (mode, shouldPass, message, requireCurrentHead = false) => {
+  const argumentsList = [validator, file, mode];
+  if (requireCurrentHead) argumentsList.push("--require-current-head");
+  const result = spawnSync(process.execPath, argumentsList, { encoding: "utf8" });
   if ((result.status === 0) !== shouldPass) throw new Error(`${message}: ${result.stderr || result.stdout}`);
 };
 
@@ -59,9 +61,18 @@ try {
   write(active);
   validate("active", true, "valid active cutover was rejected");
 
+  const priorCommit = execFileSync("git", ["rev-parse", "HEAD^"], { encoding: "utf8" }).trim();
+  const historical = structuredClone(example);
+  historical.parameters.buildCommit.value = priorCommit;
+  historical.parameters.backendImage.value = `${registry}.azurecr.io/launchproof/backend:${priorCommit}@sha256:${"a".repeat(64)}`;
+  write(historical);
+  validate("deployment", true, "immutable deployed ancestor was rejected during read-only verification");
+  validate("deployment", false, "non-current source was accepted for a new deployment", true);
+
   const unsafeCases = [
     ["wrong testnet asset", (document) => { document.parameters.xlayerUsdt0Address.value = `0x${"99".repeat(20)}`; }],
     ["mutable image", (document) => { document.parameters.backendImage.value = `${registry}.azurecr.io/launchproof/backend:latest`; }],
+    ["unreachable backend commit", (document) => { const commit = "0".repeat(40); document.parameters.buildCommit.value = commit; document.parameters.backendImage.value = `${registry}.azurecr.io/launchproof/backend:${commit}@sha256:${"a".repeat(64)}`; }],
     ["fixture tagged as backend", (document) => { document.parameters.healthyFixtureImage.value = `${registry}.azurecr.io/launchproof/fixture-healthy:${head}@sha256:${"b".repeat(64)}`; }],
     ["invalid fixture commit", (document) => { document.parameters.fixtureBuildCommit.value = "not-a-commit"; }],
     ["wildcard frontend", (document) => { document.parameters.vercelWebOrigin.value = "https://*"; }],
