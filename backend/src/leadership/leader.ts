@@ -198,12 +198,12 @@ export function postgresAdvisorySessionFactory(databaseUrl: string): () => Promi
   };
 }
 
-class PrismaAdvisorySession implements AdvisorySession {
+export class PrismaAdvisorySession implements AdvisorySession {
   constructor(private readonly client: PrismaClient) {}
 
   async tryAcquire(_holderId: string): Promise<boolean> {
     const rows = await this.client.$queryRaw<Array<{ acquired: boolean }>>`
-      SELECT pg_try_advisory_lock(${LOCK_NAMESPACE}, ${LOCK_KEY}) AS acquired
+      SELECT pg_try_advisory_lock(${LOCK_NAMESPACE}::integer, ${LOCK_KEY}::integer) AS acquired
     `;
     return rows[0]?.acquired === true;
   }
@@ -229,8 +229,8 @@ class PrismaAdvisorySession implements AdvisorySession {
         SELECT 1 FROM pg_locks
         WHERE locktype = 'advisory'
           AND pid = pg_backend_pid()
-          AND classid = ${LOCK_NAMESPACE}::oid
-          AND objid = ${LOCK_KEY}::oid
+          AND classid = ${LOCK_NAMESPACE}::integer::oid
+          AND objid = ${LOCK_KEY}::integer::oid
           AND granted
       ) AS held
     `;
@@ -238,7 +238,9 @@ class PrismaAdvisorySession implements AdvisorySession {
   }
 
   async release(): Promise<void> {
-    await this.client.$queryRaw`SELECT pg_advisory_unlock(${LOCK_NAMESPACE}, ${LOCK_KEY})`;
+    await this.client.$queryRaw`
+      SELECT pg_advisory_unlock(${LOCK_NAMESPACE}::integer, ${LOCK_KEY}::integer)
+    `;
   }
 
   async close(): Promise<void> {

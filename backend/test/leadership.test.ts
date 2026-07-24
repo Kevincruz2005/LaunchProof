@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   LeaderCoordinator,
   NotLeaderError,
+  PrismaAdvisorySession,
   ReadOnlyLeaderGuard,
   createRuntimeLeadership,
   type AdvisorySession,
@@ -58,6 +59,34 @@ class FakeSession implements AdvisorySession {
 }
 
 describe("writer leadership and fencing", () => {
+  it("casts both advisory-lock keys to PostgreSQL integer arguments", async () => {
+    const queries: string[] = [];
+    const client = {
+      $queryRaw: async (strings: TemplateStringsArray) => {
+        const sql = strings.join("?");
+        queries.push(sql);
+        if (sql.includes("pg_try_advisory_lock")) return [{ acquired: true }];
+        if (sql.includes("pg_locks")) return [{ held: true }];
+        return [];
+      },
+      $disconnect: async () => undefined,
+    };
+    const session = new PrismaAdvisorySession(client as never);
+
+    await expect(session.tryAcquire("regression")).resolves.toBe(true);
+    await expect(session.ownsLock()).resolves.toBe(true);
+    await expect(session.release()).resolves.toBeUndefined();
+    await expect(session.close()).resolves.toBeUndefined();
+
+    const lockQueries = queries.filter((sql) =>
+      sql.includes("pg_try_advisory_lock") || sql.includes("pg_advisory_unlock"));
+    expect(lockQueries).toHaveLength(2);
+    expect(lockQueries.every((sql) =>
+      sql.includes("::integer") &&
+      !sql.match(/pg_(?:try_)?advisory_(?:lock|unlock)\\(\\?, \\?\\)/))).toBe(true);
+    expect(queries.find((sql) => sql.includes("pg_locks"))).toContain("::integer::oid");
+  });
+
   it("gives read-only mode no acquisition surface and permanently denies every capability", async () => {
     const guard = new ReadOnlyLeaderGuard();
     expect(guard.snapshot()).toEqual({ state: "disabled", fence: null });
