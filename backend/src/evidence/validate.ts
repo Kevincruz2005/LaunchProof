@@ -390,15 +390,25 @@ function paidDeliveryEvidenceMatches(evidence: CanonicalEvidence, targetMatches:
     delivery.comparisons.length === 2 && delivery.comparisons.every(comparisonPasses);
 }
 
-function configuredFixtureMatch(config: Config, target: string, provider: string): boolean {
+export function configuredFixtureMatch(
+  config: Pick<Config, "fixtureUrls" | "fixtureAddresses" | "readOnly">,
+  target: string,
+  provider: string,
+): boolean {
+  let configuredProviderMatch = false;
   for (const [variant, configuredUrl] of Object.entries(config.fixtureUrls)) {
     if (!configuredUrl) continue;
     const configuredProvider = config.fixtureAddresses[variant as keyof Config["fixtureAddresses"]];
     if (!configuredProvider) continue;
-    if (normalizeManifestUrl(configuredUrl) === normalizeManifestUrl(target) &&
-      configuredProvider.toLowerCase() === provider.toLowerCase()) return true;
+    if (configuredProvider.toLowerCase() !== provider.toLowerCase()) continue;
+    configuredProviderMatch = true;
+    if (normalizeManifestUrl(configuredUrl) === normalizeManifestUrl(target)) return true;
   }
-  return false;
+  // A read-only verifier must continue to recognize immutable Passports after a
+  // fixture moves hosts. The stable, configured signing identity is sufficient
+  // because the active writer already enforced the origin+identity pair before
+  // publication. Writer mode remains strict about the currently configured URL.
+  return config.readOnly && configuredProviderMatch;
 }
 
 function normalizeManifestUrl(value: string): string {
