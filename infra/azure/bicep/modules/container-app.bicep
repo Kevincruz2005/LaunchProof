@@ -19,8 +19,8 @@ param registryServer string
 @description('Immutable image reference in registry/repository@sha256:digest form.')
 param image string
 
-@description('Immutable 40-character source commit, also used as the revision suffix.')
-param buildCommit string
+@description('Immutable 40-character deployment commit used to make the revision suffix unique for this rollout.')
+param revisionCommit string
 
 @description('Container target port.')
 param targetPort int
@@ -81,7 +81,7 @@ resource app 'Microsoft.App/containerApps@2025-07-01' = {
       secrets: secrets
     }
     template: {
-      revisionSuffix: '${toLower(substring(buildCommit, 0, 10))}-${uniqueString(image, string(env), string(secrets), string(targetPort), cpu, memory)}'
+      revisionSuffix: '${toLower(substring(revisionCommit, 0, 10))}-${uniqueString(image, string(env), string(secrets), string(targetPort), cpu, memory)}'
       containers: [
         {
           name: name

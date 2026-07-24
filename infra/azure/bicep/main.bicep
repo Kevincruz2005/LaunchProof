@@ -429,7 +429,7 @@ var fixtureBaseEnv = [
 ]
 
 module healthyFixture 'modules/container-app.bicep' = if (deployWorkloads) {
-  name: 'fixture-healthy-${take(fixtureBuildCommit, 10)}'
+  name: 'fixture-healthy-${take(buildCommit, 10)}'
   params: {
     name: healthyName
     location: location
@@ -438,7 +438,7 @@ module healthyFixture 'modules/container-app.bicep' = if (deployWorkloads) {
     identityId: identity.id
     registryServer: containerRegistryServer
     image: healthyFixtureImage
-    buildCommit: fixtureBuildCommit
+    revisionCommit: buildCommit
     targetPort: 4100
     cpu: '0.25'
     memory: '0.5Gi'
@@ -483,7 +483,7 @@ module healthyFixture 'modules/container-app.bicep' = if (deployWorkloads) {
 }
 
 module invalidOutputFixture 'modules/container-app.bicep' = if (deployWorkloads) {
-  name: 'fixture-invalid-${take(fixtureBuildCommit, 10)}'
+  name: 'fixture-invalid-${take(buildCommit, 10)}'
   params: {
     name: invalidOutputName
     location: location
@@ -492,7 +492,7 @@ module invalidOutputFixture 'modules/container-app.bicep' = if (deployWorkloads)
     identityId: identity.id
     registryServer: containerRegistryServer
     image: invalidOutputFixtureImage
-    buildCommit: fixtureBuildCommit
+    revisionCommit: buildCommit
     targetPort: 4101
     cpu: '0.25'
     memory: '0.5Gi'
@@ -515,7 +515,7 @@ module invalidOutputFixture 'modules/container-app.bicep' = if (deployWorkloads)
 }
 
 module schemaDriftFixture 'modules/container-app.bicep' = if (deployWorkloads) {
-  name: 'fixture-drift-${take(fixtureBuildCommit, 10)}'
+  name: 'fixture-drift-${take(buildCommit, 10)}'
   params: {
     name: schemaDriftName
     location: location
@@ -524,7 +524,7 @@ module schemaDriftFixture 'modules/container-app.bicep' = if (deployWorkloads) {
     identityId: identity.id
     registryServer: containerRegistryServer
     image: schemaDriftFixtureImage
-    buildCommit: fixtureBuildCommit
+    revisionCommit: buildCommit
     targetPort: 4102
     cpu: '0.25'
     memory: '0.5Gi'
@@ -547,7 +547,7 @@ module schemaDriftFixture 'modules/container-app.bicep' = if (deployWorkloads) {
 }
 
 module timeoutFixture 'modules/container-app.bicep' = if (deployWorkloads) {
-  name: 'fixture-timeout-${take(fixtureBuildCommit, 10)}'
+  name: 'fixture-timeout-${take(buildCommit, 10)}'
   params: {
     name: timeoutName
     location: location
@@ -556,7 +556,7 @@ module timeoutFixture 'modules/container-app.bicep' = if (deployWorkloads) {
     identityId: identity.id
     registryServer: containerRegistryServer
     image: timeoutFixtureImage
-    buildCommit: fixtureBuildCommit
+    revisionCommit: buildCommit
     targetPort: 4103
     cpu: '0.25'
     memory: '0.5Gi'
@@ -588,7 +588,7 @@ module backend 'modules/container-app.bicep' = if (deployBackend) {
     identityId: identity.id
     registryServer: containerRegistryServer
     image: backendImage
-    buildCommit: buildCommit
+    revisionCommit: buildCommit
     targetPort: 4000
     cpu: '0.5'
     memory: '1.0Gi'
