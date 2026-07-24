@@ -404,11 +404,11 @@ export function configuredFixtureMatch(
     configuredProviderMatch = true;
     if (normalizeManifestUrl(configuredUrl) === normalizeManifestUrl(target)) return true;
   }
-  // A read-only verifier must continue to recognize immutable Passports after a
-  // fixture moves hosts. The stable, configured signing identity is sufficient
-  // because the active writer already enforced the origin+identity pair before
-  // publication. Writer mode remains strict about the currently configured URL.
-  return config.readOnly && configuredProviderMatch;
+  // On-chain reconstruction must continue to recognize an immutable Passport
+  // after a controlled fixture moves hosts. The stable configured signing
+  // identity is sufficient here because execution separately enforces the
+  // current origin+identity pair before publication.
+  return configuredProviderMatch;
 }
 
 function normalizeManifestUrl(value: string): string {

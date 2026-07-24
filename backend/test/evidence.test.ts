@@ -28,7 +28,7 @@ describe("canonical evidence", () => {
     expect(sha256("abc")).toBe("0xba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
   });
 
-  it("keeps writer fixture trust bound to the configured origin and identity", () => {
+  it("recognizes historical fixture hosts through the stable configured identity", () => {
     expect(configuredFixtureMatch(
       { ...fixtureConfig, readOnly: false },
       "https://candidate.example/.well-known/launch-contract.json",
@@ -38,17 +38,9 @@ describe("canonical evidence", () => {
       { ...fixtureConfig, readOnly: false },
       "https://historical.example/.well-known/launch-contract.json",
       provider,
-    )).toBe(false);
-  });
-
-  it("lets read-only verification recognize a historical host only through the stable configured identity", () => {
-    expect(configuredFixtureMatch(
-      { ...fixtureConfig, readOnly: true },
-      "https://historical.example/.well-known/launch-contract.json",
-      provider,
     )).toBe(true);
     expect(configuredFixtureMatch(
-      { ...fixtureConfig, readOnly: true },
+      { ...fixtureConfig, readOnly: false },
       "https://historical.example/.well-known/launch-contract.json",
       "0x08254c2980C69e32B713857eB893b847aB5A5CC8",
     )).toBe(false);
