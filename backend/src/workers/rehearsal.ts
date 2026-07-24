@@ -356,9 +356,9 @@ export class RehearsalService {
       if (fixtureVariant && declarationState !== "verified") {
         throw new Error("Configured fixture requires a valid provider declaration signature");
       }
-      if (fixtureVariant && manifest.source_revision.toLowerCase() !== this.config.BUILD_COMMIT_SHA.toLowerCase()) {
-        throw new Error("Trusted fixture source_revision must equal the running LaunchProof build commit");
-      }
+      // Controlled fixtures are independently versioned, signed artifacts.
+      // Trust remains bound to the configured origin and provider identity;
+      // their truthful source revision need not equal the backend build SHA.
 
       if (request.previous_run_id) {
         const previous = await this.repository.getRun(request.previous_run_id);
