@@ -1093,3 +1093,233 @@ The following constraints remain explicit:
 - Existing source-branch isolation, immutable-image verification, secret-handling, spend caps, chain/asset/recipient locks, and no-push boundaries remain in force unless a later explicit instruction changes them.
 
 This record is authorization, not evidence that Phase 8 has started or passed. At this checkpoint no Railway, Azure, Vercel, Supabase, registry, wallet, payment, transaction, or external routing state was changed.
+
+## Phase 8 completed writer cutover and X Layer testnet acceptance
+
+Phase 8 was executed on 2026-07-24 only after the authorization above was present. Work remained on isolated branch `upgrade/passportgate-phase1-20260719`, which still has no upstream. No branch was pushed or merged, and `main`, `release/testnet-hardening-20260717`, `origin/main`, `origin/release/testnet-hardening-20260717`, and `origin/deployment` were not modified.
+
+### Final immutable deployment
+
+The final accepted application commit is:
+
+```text
+e19d16820b99b9424bf9debedb3819910403999d
+```
+
+The backend and controlled fixtures deliberately have independent immutable provenance. The backend is built from the final application commit. The four signed fixture artifacts remain the exact versions exercised by the one paid acceptance run:
+
+```text
+fixture source revision: 5534df450bc7db901501d629f6e575316bce5ce2
+```
+
+| Workload | Immutable ACR image digest |
+| --- | --- |
+| backend | `sha256:542261eb188c68c5e725570b6a011c069f02b8ba48935f49568f365a31bde953` |
+| healthy fixture | `sha256:e6f823ecdaa62cd861db7244dc08198c59ee58d7ba4139a0d0a3fb9f9427edc8` |
+| invalid-output fixture | `sha256:fce79a47ce4b61a03c84cf38b9289e36130027ca895d325da2973184bcd67542` |
+| schema-drift fixture | `sha256:9f2daf26703bedf5cb03962644a49e5525c5fd9878bd8713df8298a7a88989dd` |
+| timeout fixture | `sha256:a250f85323be5ece8058908fe2fcce0e714709baa67124beaec301a9d022d5ee` |
+
+Every digest exists in approved Basic ACR `launchproofp73207de1c`. The final active backend revision is `launchproof-backend--e19d16820b-hzivneredjbpq`; it is healthy with exactly one replica. Health reports:
+
+```text
+backend_mode=writer
+build_commit=e19d16820b99b9424bf9debedb3819910403999d
+x402=startup_preflight_ready
+registry=reachable
+database=reachable
+writer_leadership=leader
+fence=22 at the final sanity probe
+```
+
+Azure uses the isolated Phase 7 Supabase candidate `nozauounvbtwpjxajifg`. The live LaunchProof Supabase production project was never linked, connected, migrated, pushed to, queried, or modified. A candidate-only `launchproof_writer` PostgreSQL login was created because the supplied candidate administrator password did not satisfy the production password-length guard. The login is non-superuser, cannot create databases or roles, cannot replicate or bypass RLS, and has only the application schema/DML privileges needed by the candidate. A real PostgreSQL advisory-lock round trip passed.
+
+Registry and network anchors remained unchanged:
+
+```text
+chain ID: 1952
+network: eip155:1952
+official test USD₮0: 0x9e29b3aada05bf2d2c827af80bd28dc0b9b4fb0c
+registry: 0x99313b45b234e06eba1fc8fe7bee101b7f2f2c37
+registry creation block: 35805522
+registry runtime hash: 0xe367ae4a310bf429601d9cc43d4191e7d2c9e90056d3183918ba7cc8ac872553
+payout/provider-payment recipient: 0x8A3d59DDB0E3cafCb2E1ddb8391EB903aafB94Dd
+registry writer: 0x69d805Fe2c206fe0A5bd77C5e6191Ce74Fc17692
+```
+
+No contract or registry was redeployed.
+
+### Writer state transitions and rollback
+
+The Railway API service `launchproof-api` was stopped with the approved reversible deployment removal after its service identity and rollback readiness were checked. Its final state is zero active deployments, retained service/domain/configuration, and HTTP 404. The four Railway fixture services were never stopped or changed. The exact rollback remains `railway redeploy --service launchproof-api --environment production --yes` after first disabling the Azure writer.
+
+The transition sequence was:
+
+1. Azure remained read-only during final preflight.
+2. Railway API/writer was stopped and proved inactive.
+3. Azure read-only backend was explicitly stopped before writer activation.
+4. The approved active deployment started one Azure leader.
+5. Each later backend replacement explicitly deactivated the prior revision; deployment-time standby revisions were immediately removed after the new lease holder became healthy.
+6. Final state is exactly one active Azure revision, one replica, and one leader; Railway API remains stopped.
+
+There was never more than one leadership-lease holder. Explicit stop/start windows had zero writers rather than two. No ambiguous payment or publication state occurred during any writer transition. Railway resources were not deleted and remain the rollback target.
+
+### One real paid acceptance rehearsal
+
+The safe Phase 5 harness was invoked exactly once with:
+
+```text
+ACCEPTANCE_EXECUTE=xlayer-testnet-1952-explicit
+ACCEPTANCE_API_BASE_URL=https://launchproof-backend.delightfultree-b2769bfb.centralindia.azurecontainerapps.io
+ACCEPTANCE_LAUNCH_CONTRACT_URL=https://launchproof-fixture-healthy.delightfultree-b2769bfb.centralindia.azurecontainerapps.io/.well-known/launch-contract.json
+ACCEPTANCE_XLAYER_RPC_URL=https://testrpc.xlayer.tech/terigon
+ACCEPTANCE_XLAYER_FALLBACK_RPC_URL=https://xlayertestrpc.okx.com/terigon
+ACCEPTANCE_LAUNCH_RECIPIENT=0x8A3d59DDB0E3cafCb2E1ddb8391EB903aafB94Dd
+ACCEPTANCE_TARGET_RECIPIENT=0x8A3d59DDB0E3cafCb2E1ddb8391EB903aafB94Dd
+ACCEPTANCE_MAX_SPEND_ATOMIC=20000
+ACCEPTANCE_IDEMPOTENCY_KEY=phase8-acceptance-5534df450bc7db90
+ACCEPTANCE_CONFIRMATIONS=2
+pnpm --filter @launchproof/backend acceptance:testnet
+```
+
+`ACCEPTANCE_PAYER_PRIVATE_KEY` was supplied only through process memory and was never printed, persisted, or committed. The attempt cap was 20,000 atomic units, equal to `0.02` test USD₮0. The harness never retried.
+
+Accepted run:
+
+```text
+run ID: 0x08d2827ea8ff483cbfc872ef0023925776775c541d80ff09f0d3d175b8b41e51
+inbound x402: 0xe7a8f62b8787c33925b90625e0727440b47ff869ec8e1ddfef4508526af6cb0b
+provider payment: 0x4be372435e2267949e49faa6b29a9c7c9274872a911f5b4d93815b1140c3bd21
+registry publication: 0x5e8a74cc38c08594b2849c6786841ea86e57a58531fc6fc499e4c9b22e16f86e
+publication block: 36424714
+```
+
+Explorer links:
+
+- `https://www.okx.com/web3/explorer/xlayer-test/tx/0xe7a8f62b8787c33925b90625e0727440b47ff869ec8e1ddfef4508526af6cb0b`
+- `https://www.okx.com/web3/explorer/xlayer-test/tx/0x4be372435e2267949e49faa6b29a9c7c9274872a911f5b4d93815b1140c3bd21`
+- `https://www.okx.com/web3/explorer/xlayer-test/tx/0x5e8a74cc38c08594b2849c6786841ea86e57a58531fc6fc499e4c9b22e16f86e`
+
+Both ERC-20 receipts succeeded on chain 1952 and independently decoded an exact `10000`-atomic-unit transfer of official test USD₮0 to the configured recipient. The publication receipt succeeded from the configured registry writer to the unchanged registry. The on-chain record resolves to healthy provider `0x72533424FbC2a174a5745e0c440994997F1CD6d1`, gate bitmap `341`, status `Verified`, valid provider declaration signature, and fixture label.
+
+All five gates passed:
+
+| Gate | Result |
+| --- | --- |
+| discoverable | pass |
+| contract correct | pass |
+| fresh challenge | pass, 3/3 |
+| safe to rehearse | pass |
+| paid delivery | pass |
+
+`scripts/verify-run.sh` and `/verify/{runId}` independently returned exact match for chain record, canonical JCS, evidence/manifest/input/result hashes, provider signature, gates, storage/link semantics, both settlement transfers, publication transaction, and registry runtime. PassportGate returned:
+
+```json
+{
+  "decision": "ALLOW",
+  "reason_codes": ["PASSPORT_VALID"],
+  "run_id": "0x08d2827ea8ff483cbfc872ef0023925776775c541d80ff09f0d3d175b8b41e51",
+  "independent_verification": true,
+  "database_chain_match": true
+}
+```
+
+The invalid-output, schema-drift, and timeout fixture Launch Contracts each returned `REHEARSAL_REQUIRED` with `PASSPORT_NOT_FOUND`; none returned ALLOW and none initiated a payment. The previously known paid Passport `0xd348748baf9fc8cde21ea1b0bca66db65cc98b82ecd3c7b7299ca9d48b14aa1d` also reconstructed with `match=true`, including both transfers, publication, runtime, hashes, signature, gates, and semantics.
+
+The backend was explicitly deactivated and reactivated after acceptance. It returned HTTP 404 in the stopped state, reacquired leadership at a higher fencing epoch, and both paid Passports plus PassportGate ALLOW still passed. Subsequent immutable deployments also started from zero writer overlap and reconstructed both Passports. The final deployment first reported fence `21`; a later database-session reacquisition advanced the monotonic fence to `22` while the same sole replica remained leader and healthy.
+
+### Vercel production cutover
+
+Only after server-side acceptance passed, Vercel production variable `NEXT_PUBLIC_API_BASE_URL` was changed to:
+
+```text
+https://launchproof-backend.delightfultree-b2769bfb.centralindia.azurecontainerapps.io
+```
+
+Azure already had the exact production origin `https://launchproof-xlayer-testnet.vercel.app`; no wildcard or additional origin was added. Production preflight returns HTTP 204 with only the exact origin, methods `GET,POST`, allowed headers `content-type,payment,payment-signature,x-payment,idempotency-key`, and exposed headers `payment-required,payment-response,location`. An untrusted origin returns HTTP 403.
+
+The first CLI build exposed a genuine browser-only defect: dynamic `process.env[name]` access prevented Next.js from embedding the public chain anchors, so Chrome reported `NEXT_PUBLIC_CHAIN_ID must be configured`. The deployment was not accepted. The isolated fix changed every client chain anchor to an explicit static `process.env.NEXT_PUBLIC_*` reference; it introduced no literal chain data and retained fail-closed validation.
+
+Final Vercel production deployment:
+
+```text
+deployment: dpl_65ALaoHzpKAKx3z9UTa3vP1LPwng
+state: READY
+deployment URL: https://launchproof-xlayer-testnet-fzv2try5r.vercel.app
+production alias: https://launchproof-xlayer-testnet.vercel.app
+```
+
+Real headless Chrome loaded `/`, `/rehearse`, `/status`, `/judge`, `/passport/{acceptedRunId}`, and `/verify/{acceptedRunId}`. All returned HTTP 200, rendered expected application content, and contained no application, fetch, or configuration error. The complete route bundle set contains the Azure backend URL and no Railway API URL. The status page reaches Azure and reports `testnet_ready`.
+
+### Phase 8 fixes and deviations
+
+All fixes remained on the isolated branch and were tested before deployment:
+
+- PostgreSQL advisory lock calls now cast both lock words to `integer`, fixing the real PostgreSQL `pg_try_advisory_lock(int,int)` mismatch.
+- Historical signed fixture reconstruction trusts the stable configured provider identity when a fixture moves hosts, without weakening live execution origin/signature checks.
+- Backend releases and signed fixture artifacts now have independent required full-SHA parameters and digest validation.
+- Rehearsal execution no longer incorrectly requires the independently versioned signed fixture source SHA to equal the backend release SHA.
+- Azure rollout revision identity is separate from signed artifact identity, preventing reuse of an old Container Apps revision suffix.
+- Public frontend chain anchors use statically referenced `NEXT_PUBLIC_*` values so Next.js embeds real deployment configuration in browser bundles.
+
+Operational deviations were fail-safe:
+
+- an initial local BuildKit run had an insufficient UID/GID map and stopped before producing an image; it was rerun unprivileged with the configured subordinate ranges;
+- one temporary ACR token expired after a successful local image build but before push; the short-lived token was refreshed without display and the cached image was pushed;
+- one Azure apply stopped before backend start because historical fixture revision suffixes already existed; the rollout/artifact identity fix was reviewed, committed, rebuilt, and applied;
+- Azure briefly exposed an old revision as `standby` during a single-revision update; the leadership lease still had one holder, and the standby was explicitly deactivated before acceptance;
+- the first Vercel production build failed the Chrome test described above and was superseded by the tested final deployment.
+
+No failure caused another payment, transaction, contract deployment, registry publication, live Supabase access, protected-branch change, or Git push.
+
+### Commands and regression evidence
+
+Representative non-secret commands used:
+
+```text
+railway down --service launchproof-api --environment production --yes
+railway status --json
+
+infra/azure/scripts/validate.sh
+infra/azure/scripts/verify-images.sh .secrets/phase7-candidate.parameters.json
+infra/azure/scripts/what-if.sh launchproof-phase7-candidate .secrets/phase7-candidate.parameters.json <temporary-output>
+PHASE7_AZURE_APPLY_APPROVED=I_APPROVE_AZURE_CHARGES \
+WHAT_IF_REVIEWED=yes OLD_WRITER_DISABLED=yes \
+PHASE7_WRITER_CUTOVER_APPROVED=I_APPROVE_WRITER_CUTOVER \
+infra/azure/scripts/deploy.sh cutover launchproof-phase7-candidate .secrets/phase7-candidate.parameters.json
+
+PUBLIC_API_BASE_URL=https://launchproof-backend.delightfultree-b2769bfb.centralindia.azurecontainerapps.io \
+scripts/verify-run.sh <run-id>
+
+vercel env update NEXT_PUBLIC_API_BASE_URL production \
+  --value https://launchproof-backend.delightfultree-b2769bfb.centralindia.azurecontainerapps.io --yes
+vercel deploy --prod --yes
+
+pnpm check
+BICEP_CLI=/home/kevin-cruz/.azure/bin/bicep infra/azure/scripts/validate.sh
+git diff --check
+```
+
+Final root validation passes the security scan, contract compilation/ABI consistency, lint, all workspace typechecks, all 84 PassportGate tests, 135 backend tests, 29 frontend tests, 10 fixture tests, and all production builds: 258 application tests total. Azure Bicep compilation, rendered-template inspection, parameter fail-closed cases, health acceptance, and Bash validation pass. ShellCheck was not installed during the final rerun; Bash parser validation passed, and earlier Phase 7 ShellCheck results remain unchanged.
+
+### Cost and final state
+
+Exactly `0.02` test USD₮0 was spent by the one accepted rehearsal: `0.01` inbound and `0.01` provider payment. The three X Layer testnet transactions also consumed test OKB gas; that gas was not separately metered in this report. Existing Azure candidate charges continue for the Basic ACR, five always-on minimum Container App replicas, Key Vault operations, Log Analytics, image storage/pulls, and traffic. Image rebuilds added ACR storage/transfer activity but no new Azure resource. Vercel deployment used the existing project. Candidate Supabase remains Nano/free as previously observed, without claiming future zero cost.
+
+Temporary human Key Vault roles were removed; only managed identity `7203114d-1258-41e0-8998-a10cb0db6686` retains `Key Vault Secrets User`. Railway API remains stopped and recoverable. Railway fixtures remain unchanged. Live Supabase remains untouched. No old resource was deleted. No private key, database password, API secret, facilitator credential, wallet mnemonic, signed payload, or session token is recorded here.
+
+## Phase 8 acceptance gate
+
+- [x] Explicit Phase 8 approval was confirmed before cutover or spending.
+- [x] No deployed Git branch was modified or merged.
+- [x] The leadership lease had at most one holder throughout every state transition; final state is exactly one Azure writer.
+- [x] A real healthy rehearsal produced three genuine X Layer testnet transactions.
+- [x] All five gates, independent verification, and PassportGate ALLOW passed.
+- [x] All three failure fixtures were non-ALLOW.
+- [x] Restart/recovery and the previous Passport verification passed.
+- [x] Vercel changed only after server-side acceptance and final browser acceptance passed.
+- [x] Railway remains recoverable and no resources were deleted.
+- [x] Live Supabase was unchanged.
+- [x] `PROGRESS_PLAN.md` contains complete non-secret evidence.
+
+Phase 8 stops here. Phase 9, submission documents, marketplace/form actions, protected-branch merges, and resource deletion were not performed.
