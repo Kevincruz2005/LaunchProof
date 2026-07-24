@@ -563,7 +563,7 @@ export class RehearsalService {
         target: normalizeLaunchContractUrl(request.url),
         label: fixtureVariant && declarationState === "verified" ? "fixture" : "external",
         network: this.config.chain.network,
-        execution_mode: request.payment.status === "settled" && this.config.chainReady ? "testnet" : "local",
+        execution_mode: request.payment.status === "settled" && this.config.publicationReady ? "testnet" : "local",
         generated_at: generated,
         manifest,
         discovery,
@@ -617,7 +617,7 @@ export class RehearsalService {
           candidate,
         });
       });
-      if (request.payment.status === "settled" && this.config.chainReady && !chain.published) {
+      if (request.payment.status === "settled" && this.config.publicationReady && !chain.published) {
         throw new Error("Chain-ready settled run was not published on chain");
       }
       const record = runRecordFromEvidence({
@@ -720,7 +720,7 @@ export class RehearsalService {
       target: normalizeLaunchContractUrl(request.url),
       label: this.trustedFixtureVariant(request.url, manifest) && declarationState === "verified" ? "fixture" : "external",
       network: this.config.chain.network,
-      execution_mode: request.payment.status === "settled" && this.config.chainReady ? "testnet" : "local",
+      execution_mode: request.payment.status === "settled" && this.config.publicationReady ? "testnet" : "local",
       generated_at: generated,
       manifest,
       discovery: { infrastructure_error: sanitizeEvidenceText(reason) },

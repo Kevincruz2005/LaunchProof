@@ -951,3 +951,33 @@ The user separately confirmed the read-only design. The approved mode must never
 The user explicitly did not authorize stopping Railway, changing Vercel, activating an Azure writer, performing payments/testnet transactions, pushing the isolated branch, or touching `main`, `release/testnet-hardening-20260717`, or any origin/deployment branch. The live Supabase project must never be connected, linked, pushed to, or modified. Unexpected Azure authentication, subscription, or what-if state remains a mandatory stop condition.
 
 This authorization record does not itself prove the what-if or acceptance gates. Those results, immutable commits/digests, created resource identities, observed costs, deviations, and final Phase 7 acceptance evidence must be appended below without secrets.
+
+### Phase 7 read-only implementation before cloud access
+
+The approved Phase 5/6 working tree was first captured locally as immutable commit `bf1c8bf515eea2079f369f8f5a90464ae560aac0` on isolated branch `upgrade/passportgate-phase1-20260719`. It was not pushed. Protected local and remote deployment refs were not changed.
+
+The candidate backend now has an explicit `BACKEND_MODE=read-only` production mode with independent fail-closed layers:
+
+- production configuration requires the mode explicitly and rejects x402, registry-writer/target-payer private keys, OKX facilitator credentials, a leadership database URL/mode, and local/private execution bypasses;
+- `createRuntimeLeadership` returns `ReadOnlyLeaderGuard` before considering any session factory, so the read-only process cannot instantiate `LeaderCoordinator`, open the leadership database, acquire an advisory lock, or increment a fencing epoch;
+- read-only startup skips chain indexing, pending-publication recovery, payment recovery, target-payment recovery, run recovery, and the publication reconciliation timer;
+- payment middleware is not registered, and all rehearsal/renewal REST and MCP entry points return a retry-unsafe HTTP 503 without a 402 challenge;
+- `ReadOnlyRepository` rejects every repository mutation and lock/cursor write while delegating only reads;
+- public health, schema, status, Service Passport, PassportGate, and read-only X Layer registry reconstruction remain available;
+- chain startup preflight verifies chain 1952, both RPC configuration anchors, registry bytecode/creation block/runtime hash/evidence limit/writer identity, and the official test USD₮0 bytecode/decimals without loading a wallet or contacting the facilitator; and
+- health reports `backend_mode=read-only`, x402 `disabled_read_only`, and writer leadership `disabled`.
+
+The Phase 7 Bicep mode deploys the backend with only `backend-readonly-database-url`. Writer, payer, facilitator, and leadership secret references exist solely in the separately gated future `active` branch of the template. `read-only` requires `writerCutoverApproved=false`; `active` requires a separately approved cutover, all workloads, and the backend. Foundation, fixture-only, and read-only deployment stages are distinct. The read-only health acceptance script requires reachable database/registry dependencies and the disabled x402/leadership state.
+
+The separately approved Basic ACR is modeled in its own resource-group-scoped template with SKU `Basic`, admin credentials disabled, no anonymous pull, project/candidate/commit tags, and separate what-if/apply approval markers. It is not hidden inside the main candidate deployment.
+
+Local verification before any Azure/Supabase contact:
+
+```text
+pnpm --filter backend typecheck
+pnpm --filter backend test
+BICEP_CLI=/home/kevin-cruz/.azure/bin/bicep infra/azure/scripts/validate.sh
+git diff --check
+```
+
+Results: backend typecheck passed; 133/133 backend tests passed; all three Bicep entry points compiled using Bicep 0.45.15; parameter, rendered-template, resource-group, health-acceptance, Bash, and ShellCheck safety suites passed. The local IaC test still confirms that `main.bicep` itself creates no registry or database; ACR creation is isolated in the separately approved template. No cloud identity had been queried and no cloud resource had been created at this checkpoint.

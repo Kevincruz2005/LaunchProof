@@ -9,7 +9,7 @@ if (!file || !new Set(["example", "deployment", "active"]).has(mode)) {
 const parsed = JSON.parse(readFileSync(file, "utf8"));
 const parameters = Object.fromEntries(Object.entries(parsed.parameters ?? {}).map(([name, entry]) => [name, entry.value]));
 const required = [
-  "namePrefix", "activationMode", "writerCutoverApproved", "deployWorkloads", "buildCommit",
+  "namePrefix", "activationMode", "writerCutoverApproved", "deployWorkloads", "deployBackend", "buildCommit",
   "sourceRepositoryUrl", "vercelWebOrigin", "containerRegistrySubscriptionId", "containerRegistryResourceGroup",
   "containerRegistryName", "containerRegistryServer", "backendImage", "healthyFixtureImage",
   "invalidOutputFixtureImage", "schemaDriftFixtureImage", "timeoutFixtureImage", "xlayerRpcUrl",
@@ -26,8 +26,8 @@ if (/(private.?key|secret.?key|passphrase|database.?url)"\s*:/i.test(serialized)
 }
 if (mode === "example") {
   if (!serialized.includes("REPLACE_")) throw new Error("example parameters must remain visibly non-deployable");
-  if (parameters.activationMode !== "candidate" || parameters.writerCutoverApproved !== false) {
-    throw new Error("example parameters must default to the non-writer candidate mode");
+  if (parameters.activationMode !== "read-only" || parameters.writerCutoverApproved !== false || parameters.deployBackend !== true) {
+    throw new Error("example parameters must default to a deployed read-only backend");
   }
   process.stdout.write("Azure example parameters are non-secret and intentionally non-deployable.\n");
   process.exit(0);
@@ -98,12 +98,17 @@ if (new Set(productionRoleAddresses).size !== productionRoleAddresses.length) {
   throw new Error("registry, payout, and controlled fixture declaration identities must be distinct");
 }
 
+if (typeof parameters.deployWorkloads !== "boolean" || typeof parameters.deployBackend !== "boolean") {
+  throw new Error("deployWorkloads and deployBackend must be booleans");
+}
 if (mode === "active") {
-  if (parameters.activationMode !== "active" || parameters.writerCutoverApproved !== true || parameters.deployWorkloads !== true) {
-    throw new Error("active deployment requires activationMode=active, writerCutoverApproved=true, and deployWorkloads=true");
+  if (parameters.activationMode !== "active" || parameters.writerCutoverApproved !== true || parameters.deployWorkloads !== true || parameters.deployBackend !== true) {
+    throw new Error("active deployment requires activationMode=active, writerCutoverApproved=true, deployWorkloads=true, and deployBackend=true");
   }
-} else if (parameters.activationMode !== "candidate" || parameters.writerCutoverApproved !== false) {
-  throw new Error("candidate deployment must omit the backend writer");
+} else if (parameters.activationMode !== "read-only" || parameters.writerCutoverApproved !== false) {
+  throw new Error("candidate deployment must use the read-only backend mode");
+} else if (parameters.deployBackend && !parameters.deployWorkloads) {
+  throw new Error("read-only backend deployment requires all four fixture workloads");
 }
 if (parameters.enableBudget && (!Array.isArray(parameters.budgetContactEmails) || parameters.budgetContactEmails.length === 0)) {
   throw new Error("enabled budget requires at least one contact email");

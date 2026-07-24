@@ -40,7 +40,7 @@ for index in 1 2 3; do jq -e '.x402 == false' "$tmp/health-$index.json" >/dev/nu
 if [[ -n "$BACKEND_ORIGIN" ]]; then
   [[ "$BACKEND_ORIGIN" == https://* ]] || { printf 'backend origin must use HTTPS\n' >&2; exit 1; }
   curl --fail --silent --show-error --max-time 30 "${BACKEND_ORIGIN%/}/healthz" >"$tmp/backend-health.json"
-  jq -e '.dependencies.database == "reachable" and .dependencies.registry == "reachable" and .dependencies.x402 == "startup_preflight_ready" and .dependencies.writer_leadership.state == "leader"' "$tmp/backend-health.json" >/dev/null
+  jq -e '.backend_mode == "read-only" and .dependencies.database == "reachable" and .dependencies.registry == "reachable" and .dependencies.x402 == "disabled_read_only" and .dependencies.writer_leadership.state == "disabled"' "$tmp/backend-health.json" >/dev/null
 fi
 
 printf 'Read-only Azure health/manifest acceptance passed. No payment or rehearsal was executed.\n'

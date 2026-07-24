@@ -3,8 +3,10 @@ import { loadConfig } from "../src/config.js";
 
 const production = {
   NODE_ENV: "production",
+  BACKEND_MODE: "writer",
   PUBLIC_API_BASE_URL: "https://api.launchproof.dev",
   PUBLIC_WEB_BASE_URL: "https://launchproof.dev",
+  PUBLIC_ALLOWED_ORIGINS: "https://launchproof.dev",
   BUILD_COMMIT_SHA: "a".repeat(40),
   RELEASE_IMAGE_TAG: "a".repeat(40),
   RELEASE_IMAGE_DIGEST: `sha256:${"b".repeat(64)}`,
@@ -41,6 +43,19 @@ const production = {
   TARGET_ALLOWLIST: "healthy.fixtures.launchproof.dev,invalid-output.fixtures.launchproof.dev,schema-drift.fixtures.launchproof.dev,timeout.fixtures.launchproof.dev",
 } satisfies NodeJS.ProcessEnv;
 
+const readOnlyProduction = {
+  ...production,
+  BACKEND_MODE: "read-only",
+  X402_ENABLED: "false",
+  REGISTRY_WRITER_PRIVATE_KEY: undefined,
+  TARGET_PAYER_PRIVATE_KEY: undefined,
+  LEADERSHIP_DATABASE_URL: undefined,
+  LEADERSHIP_DATABASE_MODE: undefined,
+  OKX_API_KEY: undefined,
+  OKX_SECRET_KEY: undefined,
+  OKX_PASSPHRASE: undefined,
+} satisfies NodeJS.ProcessEnv;
+
 describe("production configuration", () => {
   it("fails closed when a required production dependency is missing", () => {
     const { FIXTURE_HEALTHY_URL: _missing, ...incomplete } = production;
@@ -49,6 +64,36 @@ describe("production configuration", () => {
 
   it("marks a complete, immutable HTTPS configuration ready", () => {
     expect(loadConfig(production).productionReady).toBe(true);
+  });
+
+  it("starts a complete read-only production configuration without any writer capability", () => {
+    const configured = loadConfig(readOnlyProduction);
+    expect(configured.readOnly).toBe(true);
+    expect(configured.productionReady).toBe(true);
+    expect(configured.chainReady).toBe(true);
+    expect(configured.publicationReady).toBe(false);
+    expect(configured.paymentReady).toBe(false);
+    expect(configured.X402_ENABLED).toBe(false);
+    expect(configured.REGISTRY_WRITER_PRIVATE_KEY).toBeUndefined();
+    expect(configured.TARGET_PAYER_PRIVATE_KEY).toBeUndefined();
+    expect(configured.LEADERSHIP_DATABASE_URL).toBeUndefined();
+  });
+
+  it("rejects every writer, payment, recovery, and bypass capability in read-only mode", () => {
+    for (const [name, value] of [
+      ["X402_ENABLED", "true"],
+      ["REGISTRY_WRITER_PRIVATE_KEY", production.REGISTRY_WRITER_PRIVATE_KEY],
+      ["TARGET_PAYER_PRIVATE_KEY", production.TARGET_PAYER_PRIVATE_KEY],
+      ["LEADERSHIP_DATABASE_URL", production.LEADERSHIP_DATABASE_URL],
+      ["LEADERSHIP_DATABASE_MODE", "session"],
+      ["OKX_API_KEY", production.OKX_API_KEY],
+      ["OKX_SECRET_KEY", production.OKX_SECRET_KEY],
+      ["OKX_PASSPHRASE", production.OKX_PASSPHRASE],
+      ["ALLOW_LOCAL_UNPAID_RUNS", "true"],
+      ["ALLOW_PRIVATE_TARGETS", "true"],
+    ] as const) {
+      expect(() => loadConfig({ ...readOnlyProduction, [name]: value })).toThrow(/Read-only backend forbids/);
+    }
   });
 
   it("requires a dedicated session-mode PostgreSQL leadership connection", () => {

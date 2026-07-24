@@ -152,7 +152,7 @@ export class RegistryService {
     if (
       evidence.execution_mode !== "testnet" ||
       evidence.payments.launchproof.status !== "settled" ||
-      !this.config.chainReady ||
+      !this.config.publicationReady ||
       !this.config.REGISTRY_ADDRESS ||
       !this.config.REGISTRY_WRITER_PRIVATE_KEY ||
       !this.config.XLAYER_RPC_URL

@@ -1,25 +1,23 @@
 # Azure what-if status
 
-Status on 2026-07-22: **blocked before authentication**.
+Status on 2026-07-24: **local validation complete; authenticated review not yet started**.
 
 Observed locally:
 
-- `az` is not installed or available on `PATH`.
-- Therefore no Azure CLI version, login, tenant, subscription list, provider registration, candidate resource group, registry, quota, region support, or authorization could be inspected.
-- No `az login` was attempted because it is interactive and the user did not need to authenticate merely to author offline IaC.
+- Azure CLI 2.87.0 is locally available.
+- Bicep 0.45.15 compiles the resource group, separately approved Basic ACR, and read-only candidate templates under strict linting.
+- No Azure account command has yet been run in this Phase 7 continuation, so tenant/subscription/authentication remains unverified.
 - No subscription was selected.
 - No subscription-scope or resource-group what-if was run.
 - No Azure resource was created, changed, queried, or deleted.
 
-The precise next step, only after Phase 7 is explicitly approved, is:
+The precise next step under the recorded Phase 7 approval is:
 
-1. Install Azure CLI 2.76.0 or newer.
-2. Run `az login` interactively.
-3. Run `az account list`; if multiple enabled subscriptions exist, ask the user to choose and export `AZURE_SUBSCRIPTION_ID`.
-4. Inspect existing ACR availability and the candidate region's Container Apps support/quota.
-5. Fill non-secret parameter files and validate image digests.
-6. Run `scripts/resource-group-what-if.sh` for the subscription-scope dedicated resource group plan.
-7. If the dedicated resource group already exists, run `scripts/what-if.sh` for `main.bicep` with `ProviderNoRbac`.
-8. Record resource changes and costs, and ask once for approval if any resource can incur charges.
+1. Run `az account show` and stop if its tenant/subscription differs from the explicitly approved values.
+2. Inspect provider registration, resource-name availability, `centralindia` support/quota, and current candidate-resource state.
+3. Run `scripts/resource-group-what-if.sh`.
+4. After the resource group exists, run and review `scripts/registry-what-if.sh`; create only the separately approved Basic ACR.
+5. Build immutable images, fill non-secret parameters with recorded digests, and run `scripts/what-if.sh`.
+6. Record every change and deploy only the approved read-only candidate.
 
 An offline Bicep compilation is not described as an Azure what-if result. It proves template syntax/type validity only.

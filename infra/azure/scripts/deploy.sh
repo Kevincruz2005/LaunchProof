@@ -7,8 +7,8 @@ MODE="${1:-}"
 RESOURCE_GROUP="${2:-}"
 PARAMETERS_FILE="${3:-}"
 [[ -n "$MODE" && -n "$RESOURCE_GROUP" && -n "$PARAMETERS_FILE" ]] ||
-  fail "usage: deploy.sh <foundation|fixtures|cutover> <resource-group> <deployment-parameters.json>"
-[[ "$MODE" =~ ^(foundation|fixtures|cutover)$ ]] || fail "unknown deployment mode"
+  fail "usage: deploy.sh <foundation|fixtures|readonly|cutover> <resource-group> <deployment-parameters.json>"
+[[ "$MODE" =~ ^(foundation|fixtures|readonly|cutover)$ ]] || fail "unknown deployment mode"
 
 require_phase7_apply_approval
 require_azure_cli
@@ -20,17 +20,21 @@ require_command jq
 case "$MODE" in
   foundation)
     node "${AZURE_DIR}/scripts/validate-parameters.mjs" "$PARAMETERS_FILE" deployment
-    overrides=(activationMode=candidate writerCutoverApproved=false deployWorkloads=false)
+    overrides=(activationMode=read-only writerCutoverApproved=false deployWorkloads=false deployBackend=false)
     ;;
   fixtures)
     node "${AZURE_DIR}/scripts/validate-parameters.mjs" "$PARAMETERS_FILE" deployment
-    overrides=(activationMode=candidate writerCutoverApproved=false deployWorkloads=true)
+    overrides=(activationMode=read-only writerCutoverApproved=false deployWorkloads=true deployBackend=false)
+    ;;
+  readonly)
+    node "${AZURE_DIR}/scripts/validate-parameters.mjs" "$PARAMETERS_FILE" deployment
+    overrides=(activationMode=read-only writerCutoverApproved=false deployWorkloads=true deployBackend=true)
     ;;
   cutover)
     node "${AZURE_DIR}/scripts/validate-parameters.mjs" "$PARAMETERS_FILE" active
     [[ "${OLD_WRITER_DISABLED:-}" == "yes" ]] || fail "cutover refused: stop and health-check the Railway writer first, then set OLD_WRITER_DISABLED=yes"
     [[ "${PHASE7_WRITER_CUTOVER_APPROVED:-}" == "I_APPROVE_WRITER_CUTOVER" ]] || fail "cutover requires separate explicit writer approval"
-    overrides=(activationMode=active writerCutoverApproved=true deployWorkloads=true)
+    overrides=(activationMode=active writerCutoverApproved=true deployWorkloads=true deployBackend=true)
     ;;
 esac
 
@@ -38,11 +42,14 @@ esac
 key_vault_name="$(az deployment group show --resource-group "$RESOURCE_GROUP" --name launchproof-foundation --query properties.outputs.keyVaultName.value --output tsv 2>/dev/null || true)"
 if [[ "$MODE" != "foundation" ]]; then
   [[ -n "$key_vault_name" ]] || fail "foundation deployment output was not found"
-  secret_group="requiredForFixtures"
-  [[ "$MODE" == "cutover" ]] && secret_group="requiredForBackendCutover"
-  while IFS= read -r secret_name; do
-    az keyvault secret show --vault-name "$key_vault_name" --name "$secret_name" --query id --output none >/dev/null
-  done < <(jq -r --arg group "$secret_group" '.[$group][]' "${AZURE_DIR}/key-vault-secret-names.json")
+  secret_groups=(requiredForFixtures)
+  [[ "$MODE" == "readonly" ]] && secret_groups+=(requiredForReadOnlyBackend)
+  [[ "$MODE" == "cutover" ]] && secret_groups+=(requiredForBackendCutover)
+  for secret_group in "${secret_groups[@]}"; do
+    while IFS= read -r secret_name; do
+      az keyvault secret show --vault-name "$key_vault_name" --name "$secret_name" --query id --output none >/dev/null
+    done < <(jq -r --arg group "$secret_group" '.[$group][]' "${AZURE_DIR}/key-vault-secret-names.json")
+  done
 fi
 
 deployment_name="launchproof-${MODE}"

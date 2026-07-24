@@ -19,7 +19,6 @@ export async function validateProductionChain(config: Config): Promise<void> {
     !config.chainReady ||
     !config.XLAYER_RPC_URL ||
     !config.REGISTRY_ADDRESS ||
-    !config.REGISTRY_WRITER_PRIVATE_KEY ||
     !config.REGISTRY_RUNTIME_CODE_HASH
   ) return;
   const transports = [http(config.XLAYER_RPC_URL), ...(config.XLAYER_FALLBACK_RPC_URL ? [http(config.XLAYER_FALLBACK_RPC_URL)] : [])];
@@ -47,21 +46,24 @@ export async function validateProductionChain(config: Config): Promise<void> {
     throw new Error("Registry runtime bytecode does not match REGISTRY_RUNTIME_CODE_HASH");
   }
   if (maxEvidence !== BigInt(MAX_EVIDENCE_BYTES)) throw new Error("Registry bytecode does not expose the required evidence limit");
-  const writerAccount = privateKeyToAccount(config.REGISTRY_WRITER_PRIVATE_KEY as `0x${string}`);
-  if (writer.toLowerCase() !== writerAccount.address.toLowerCase()) throw new Error("Registry writer key does not match the deployed immutable writer");
   if (writer === zeroAddress) throw new Error("Registry writer must be nonzero");
-  if (await client.getBalance({ address: writerAccount.address }) === 0n) throw new Error("Registry writer has no gas balance");
-  if (config.PAYOUT_ADDRESS && writer.toLowerCase() === config.PAYOUT_ADDRESS.toLowerCase()) {
-    throw new Error("Registry writer and payout wallet must be separate addresses");
-  }
-  if (config.TARGET_PAYER_PRIVATE_KEY) {
-    const targetPayer = privateKeyToAccount(config.TARGET_PAYER_PRIVATE_KEY as `0x${string}`).address;
-    if ([writer, config.PAYOUT_ADDRESS].filter(Boolean).some((address) => address!.toLowerCase() === targetPayer.toLowerCase())) {
-      throw new Error("Target payer wallet must be separate from registry writer and payout wallets");
+  if (!config.readOnly) {
+    if (!config.REGISTRY_WRITER_PRIVATE_KEY) throw new Error("Writer mode preflight requires the registry writer key");
+    const writerAccount = privateKeyToAccount(config.REGISTRY_WRITER_PRIVATE_KEY as `0x${string}`);
+    if (writer.toLowerCase() !== writerAccount.address.toLowerCase()) throw new Error("Registry writer key does not match the deployed immutable writer");
+    if (await client.getBalance({ address: writerAccount.address }) === 0n) throw new Error("Registry writer has no gas balance");
+    if (config.PAYOUT_ADDRESS && writer.toLowerCase() === config.PAYOUT_ADDRESS.toLowerCase()) {
+      throw new Error("Registry writer and payout wallet must be separate addresses");
     }
-    if (await client.getBalance({ address: targetPayer }) === 0n) throw new Error("Target payer has no gas balance");
+    if (config.TARGET_PAYER_PRIVATE_KEY) {
+      const targetPayer = privateKeyToAccount(config.TARGET_PAYER_PRIVATE_KEY as `0x${string}`).address;
+      if ([writer, config.PAYOUT_ADDRESS].filter(Boolean).some((address) => address!.toLowerCase() === targetPayer.toLowerCase())) {
+        throw new Error("Target payer wallet must be separate from registry writer and payout wallets");
+      }
+      if (await client.getBalance({ address: targetPayer }) === 0n) throw new Error("Target payer has no gas balance");
+    }
   }
-  if (config.X402_ENABLED) {
+  if (config.X402_ENABLED || config.readOnly) {
     const asset = config.chain.usdt0Address;
     const [assetCode, assetDecimals] = await Promise.all([
       client.getCode({ address: asset }),
@@ -69,7 +71,7 @@ export async function validateProductionChain(config: Config): Promise<void> {
     ]);
     if (!assetCode || assetCode === "0x") throw new Error(`Configured USDT0 asset has no bytecode on ${config.chain.name}`);
     if (assetDecimals !== config.chain.usdt0Decimals) throw new Error("Configured USDT0 asset does not expose the expected 6 decimals");
-    if (config.TARGET_PAYER_PRIVATE_KEY) {
+    if (!config.readOnly && config.TARGET_PAYER_PRIVATE_KEY) {
       const targetPayer = privateKeyToAccount(config.TARGET_PAYER_PRIVATE_KEY as `0x${string}`).address;
       const tokenBalance = await client.readContract({
         address: asset,

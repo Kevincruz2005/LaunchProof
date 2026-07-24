@@ -33,7 +33,7 @@ import {
   passportGateTransportBody,
   type PassportGateAdapter,
 } from "../passport-gate/service.js";
-import { AlwaysLeader, type LeaderGuard } from "../leadership/leader.js";
+import { AlwaysLeader, ReadOnlyLeaderGuard, type LeaderGuard } from "../leadership/leader.js";
 
 export function createApp(
   config: Config,
@@ -45,7 +45,7 @@ export function createApp(
     url: rehearsalTargetSchemaFor(config.ALLOW_PRIVATE_TARGETS),
   });
   const paidRequestSchema = protectedRequestArgumentsSchema;
-  const leadership = options.leadership ?? new AlwaysLeader();
+  const leadership = options.leadership ?? (config.readOnly ? new ReadOnlyLeaderGuard() : new AlwaysLeader());
   const service = new RehearsalService(config, repository, leadership);
   const registry = new RegistryService(config, leadership);
   const passportGate = options.passportGate ?? new PassportGateService(config, repository, registry);
@@ -98,45 +98,48 @@ export function createApp(
     standardHeaders: "draft-8",
     legacyHeaders: false,
     skip: (request) =>
+      config.readOnly ||
       !new Set(["/api/rehearsals", "/api/renewals", "/mcp/rehearse", "/mcp/renew"]).has(request.path) ||
       (request.path.startsWith("/mcp/") && isUnchargedMcpRequest(request.body)),
     keyGenerator: (request) => ipKeyGenerator(request.ip ?? "unknown"),
   });
   app.use(paymentChallengeLimiter);
-  const reservePaidRequest = async ({ body, path: requestPath }: { body: unknown; path: string }) => {
-    const parsed = paidRequestSchema.parse(mcpArguments(body));
-    const renewal = requestPath.includes("renew");
-    if (renewal && !parsed.previous_run_id) throw new Error("Paid renewal omitted previous_run_id");
-    if (!renewal && parsed.previous_run_id) throw new Error("Paid genesis request cannot contain previous_run_id");
-    return service.reserve(
-      parsed.url,
-      parsed.idempotency_key,
-      renewal ? "renewal" : "genesis",
-      parsed.previous_run_id ?? null,
-    );
-  };
-  app.use(createPaymentMiddleware(config, repository, async ({ body, path: settledPath, payment }) => {
-    const settledBody = paidRequestSchema.parse(mcpArguments(body));
-    const renewal = settledPath.includes("renew");
-    if (renewal && !settledBody.previous_run_id) throw new Error("Settled renewal omitted previous_run_id");
-    if (!renewal && settledBody.previous_run_id) throw new Error("Settled genesis request cannot contain previous_run_id");
-    const reserved = await service.reserve(
-      settledBody.url,
-      settledBody.idempotency_key,
-      renewal ? "renewal" : "genesis",
-      settledBody.previous_run_id ?? null,
-    );
-    await service.runReserved(
-      reserved.run_id,
-      {
-        url: settledBody.url,
-        idempotency_key: settledBody.idempotency_key,
-        payment,
-        ...(settledBody.previous_run_id ? { previous_run_id: settledBody.previous_run_id } : {}),
-      },
-      false,
-    );
-  }, reservePaidRequest, leadership));
+  if (!config.readOnly) {
+    const reservePaidRequest = async ({ body, path: requestPath }: { body: unknown; path: string }) => {
+      const parsed = paidRequestSchema.parse(mcpArguments(body));
+      const renewal = requestPath.includes("renew");
+      if (renewal && !parsed.previous_run_id) throw new Error("Paid renewal omitted previous_run_id");
+      if (!renewal && parsed.previous_run_id) throw new Error("Paid genesis request cannot contain previous_run_id");
+      return service.reserve(
+        parsed.url,
+        parsed.idempotency_key,
+        renewal ? "renewal" : "genesis",
+        parsed.previous_run_id ?? null,
+      );
+    };
+    app.use(createPaymentMiddleware(config, repository, async ({ body, path: settledPath, payment }) => {
+      const settledBody = paidRequestSchema.parse(mcpArguments(body));
+      const renewal = settledPath.includes("renew");
+      if (renewal && !settledBody.previous_run_id) throw new Error("Settled renewal omitted previous_run_id");
+      if (!renewal && settledBody.previous_run_id) throw new Error("Settled genesis request cannot contain previous_run_id");
+      const reserved = await service.reserve(
+        settledBody.url,
+        settledBody.idempotency_key,
+        renewal ? "renewal" : "genesis",
+        settledBody.previous_run_id ?? null,
+      );
+      await service.runReserved(
+        reserved.run_id,
+        {
+          url: settledBody.url,
+          idempotency_key: settledBody.idempotency_key,
+          payment,
+          ...(settledBody.previous_run_id ? { previous_run_id: settledBody.previous_run_id } : {}),
+        },
+        false,
+      );
+    }, reservePaidRequest, leadership));
+  }
 
   app.get("/healthz", freeLimiter, asyncRoute(async (_request, response) => {
     const [databaseReachable, registryReachable] = await Promise.all([
@@ -149,12 +152,13 @@ export function createApp(
     response.status(healthy ? 200 : 503).json({
       name: "LaunchProof",
       version: "1.0.0",
+      backend_mode: config.BACKEND_MODE,
       build_commit: config.BUILD_COMMIT_SHA,
       timestamp: new Date().toISOString(),
       dependencies: {
         x402: config.paymentReady
           ? options.startupPreflightPassed ? "startup_preflight_ready" : "configured_not_probed"
-          : "not_ready",
+          : config.readOnly ? "disabled_read_only" : "not_ready",
         registry: registryReachable ? "reachable" : config.chainReady ? "unreachable" : "not_configured",
         database: databaseReachable ? (config.DATABASE_URL ? "reachable" : "memory_cache") : "unreachable",
         writer_leadership: leadership.snapshot(),
@@ -165,6 +169,7 @@ export function createApp(
   app.get("/.well-known/launchproof.json", freeLimiter, (_request, response) => response.json(projectCard(config)));
 
   app.post("/api/rehearsals", asyncRoute(async (request, response) => {
+    assertWritable(config);
     const body = requestSchema.parse(request.body);
     if (body.previous_run_id) throw new HttpError(400, "Use /api/renewals when previous_run_id is supplied");
     const run = await service.reserve(body.url, body.idempotency_key, "genesis", null);
@@ -176,6 +181,7 @@ export function createApp(
   }));
 
   app.post("/api/renewals", asyncRoute(async (request, response) => {
+    assertWritable(config);
     const body = requestSchema.parse(request.body);
     if (!body.previous_run_id) throw new HttpError(400, "previous_run_id is required");
     const run = await service.reserve(body.url, body.idempotency_key, "renewal", body.previous_run_id);
@@ -191,13 +197,15 @@ export function createApp(
   }));
 
   app.post("/mcp/rehearse", (request, response, next) => {
+    if (config.readOnly) return next(new ReadOnlyModeError());
     void handleMcp(request, response, "rehearse", service, repository, config, passportGate).catch(next);
   });
   app.post("/mcp/renew", (request, response, next) => {
+    if (config.readOnly) return next(new ReadOnlyModeError());
     void handleMcp(request, response, "renew", service, repository, config, passportGate).catch(next);
   });
   app.post("/mcp/public", freeLimiter, (request, response, next) => {
-    void handleMcp(request, response, "public", service, repository, config, passportGate).catch(next);
+    void handleMcp(request, response, "public", service, repository, config, passportGate, registry).catch(next);
   });
 
   app.post("/api/v1/passport-gate/check", freeLimiter, asyncRoute(async (request, response) => {
@@ -271,13 +279,15 @@ export function createApp(
   app.get("/status", freeLimiter, asyncRoute(async (_request, response) => {
     response.json({
       observed_at: new Date().toISOString(),
-      service: config.paymentReady && config.chainReady && config.chain.testnet
+      service: config.readOnly && config.productionReady && config.chainReady
+        ? "read_only_ready"
+        : config.paymentReady && config.chainReady && config.chain.testnet
         ? "testnet_ready"
         : "configuration_incomplete",
       listing: config.OKX_AI_LISTING_URL ? "published" : "not_configured",
       chain: publicChainPolicy(config),
       payments: publicPaymentPolicy(config),
-      deployment: { backend_replicas: config.BACKEND_REPLICA_COUNT, model: "single-replica" },
+      deployment: { backend_replicas: config.BACKEND_REPLICA_COUNT, model: "single-replica", mode: config.BACKEND_MODE },
       prices: { genesis_rehearsal: "0.01 USD₮0", renew_passport: "0.10 USD₮0" },
       registry: config.REGISTRY_ADDRESS ?? null,
       recent_runs: await repository.recentRuns(10),
@@ -312,6 +322,15 @@ export function createApp(
       response.status(400).json({ error: "invalid_request", reason_code: error.code, message: error.message });
       return;
     }
+    if (error instanceof ReadOnlyModeError) {
+      response.status(503).json({
+        error: "read_only_candidate",
+        message: error.message,
+        retry_safe: false,
+        request_id: String(response.locals.requestId ?? "unknown"),
+      });
+      return;
+    }
     const status = error instanceof HttpError ? error.status : 500;
     const requestId = String(response.locals.requestId ?? "unknown");
     if (status === 500) {
@@ -335,6 +354,17 @@ class HttpError extends Error {
   }
 }
 
+class ReadOnlyModeError extends Error {
+  constructor() {
+    super("This candidate is read-only; rehearsals, renewals, payments, recovery, and publication are disabled");
+    this.name = "ReadOnlyModeError";
+  }
+}
+
+function assertWritable(config: Config): void {
+  if (config.readOnly) throw new ReadOnlyModeError();
+}
+
 function asyncRoute(handler: (request: Request, response: Response) => Promise<void>) {
   return (request: Request, response: Response, next: NextFunction) => void handler(request, response).catch(next);
 }
@@ -353,8 +383,8 @@ function projectCard(config: Config) {
     category: "Software services",
     okx_ai_listing_url: config.OKX_AI_LISTING_URL ?? null,
     mcp_endpoint: `${api}/mcp/rehearse`,
-    tools: ["rehearse_launch_contract"],
-    compatibility_tools: ["preflight_service"],
+    tools: config.readOnly ? [] : ["rehearse_launch_contract"],
+    compatibility_tools: config.readOnly ? [] : ["preflight_service"],
     public_mcp_endpoint: `${api}/mcp/public`,
     public_tools: ["get_service_passport", "check_service_passport"],
     public_compatibility_tools: ["get_run"],
@@ -373,7 +403,7 @@ function projectCard(config: Config) {
     passport_gate_schema_url: `${api}/schema/passport-gate.schema.json`,
     chain: publicChainPolicy(config),
     payments: publicPaymentPolicy(config),
-    deployment: { backend_replicas: config.BACKEND_REPLICA_COUNT, model: "single-replica" },
+    deployment: { backend_replicas: config.BACKEND_REPLICA_COUNT, model: "single-replica", mode: config.BACKEND_MODE },
     network: config.chain.network,
     settlement_asset: "USD₮0",
     settlement_asset_address: config.chain.usdt0Address,

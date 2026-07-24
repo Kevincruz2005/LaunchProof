@@ -15,7 +15,7 @@ export type LeaderCapability =
   | "chain-index";
 
 export interface LeadershipSnapshot {
-  state: "standby" | "leader" | "lost" | "stopped";
+  state: "disabled" | "standby" | "leader" | "lost" | "stopped";
   fence: string | null;
 }
 
@@ -157,6 +157,39 @@ export class AlwaysLeader implements LeaderGuard {
   signal(): AbortSignal { return this.controller.signal; }
 }
 
+/**
+ * Permanent fail-closed guard for a read-only deployment.
+ *
+ * This type has no session factory, start, poll, acquire, release, or takeover
+ * method. It therefore cannot open a leadership database connection or issue
+ * either advisory-lock or fencing SQL.
+ */
+export class ReadOnlyLeaderGuard implements LeaderGuard {
+  private readonly controller = abortedController("Read-only backend mode permanently disables writer leadership");
+
+  snapshot(): LeadershipSnapshot { return { state: "disabled", fence: null }; }
+
+  async assertLeader(capability: LeaderCapability): Promise<string> {
+    throw new NotLeaderError(capability);
+  }
+
+  signal(): AbortSignal { return this.controller.signal; }
+}
+
+export function createRuntimeLeadership(options: {
+  backendMode: "writer" | "read-only";
+  nodeEnv: "development" | "test" | "production";
+  leadershipDatabaseUrl?: string;
+  sessionFactory?: () => Promise<AdvisorySession>;
+}): LeaderGuard {
+  if (options.backendMode === "read-only") return new ReadOnlyLeaderGuard();
+  if (options.nodeEnv !== "production") return new AlwaysLeader();
+  if (!options.leadershipDatabaseUrl) throw new Error("Writer production mode requires LEADERSHIP_DATABASE_URL");
+  return new LeaderCoordinator(
+    options.sessionFactory ?? postgresAdvisorySessionFactory(options.leadershipDatabaseUrl),
+  );
+}
+
 export function postgresAdvisorySessionFactory(databaseUrl: string): () => Promise<AdvisorySession> {
   return async () => {
     const client = new PrismaClient({ datasourceUrl: singleConnectionUrl(databaseUrl) });
@@ -220,8 +253,8 @@ function singleConnectionUrl(raw: string): string {
   return url.toString();
 }
 
-function abortedController(): AbortController {
+function abortedController(reason = "Writer leadership is not held"): AbortController {
   const controller = new AbortController();
-  controller.abort(new Error("Writer leadership is not held"));
+  controller.abort(new Error(reason));
   return controller;
 }

@@ -1,6 +1,6 @@
 # LaunchProof Azure candidate infrastructure
 
-This directory contains Phase 6 infrastructure-as-code only. It does not move the Vercel frontend, Supabase PostgreSQL, X Layer registry, settlements, or DNS. It never creates Azure Container Registry. Nothing here has been applied to Azure.
+This directory contains the Phase 6 plan plus the approved Phase 7 read-only candidate controls. It does not move the Vercel frontend, live Supabase PostgreSQL, Railway writer, X Layer registry, settlements, or DNS.
 
 ## Architecture
 
@@ -9,22 +9,21 @@ Vercel frontend (existing)
           |
           | exact HTTPS CORS origin
           v
-Azure Container Apps environment (candidate resource group)
-  +-- backend API/worker/indexer (omitted in candidate mode; 1 replica after cutover)
+Azure Container Apps environment (isolated candidate resource group)
+  +-- read-only backend API (1 replica; no worker/indexer/payment/writer capability)
   +-- healthy paid fixture       (1 replica, distinct HTTPS origin)
   +-- invalid-output fixture     (1 replica, distinct HTTPS origin)
   +-- schema-drift fixture       (1 replica, distinct HTTPS origin)
   +-- timeout fixture            (1 replica, distinct HTTPS origin)
           |
-          +-- existing Supabase PostgreSQL
-          |     +-- operational DATABASE_URL
-          |     +-- direct/session leadership URL and Phase 5 advisory lock
+          +-- isolated candidate Supabase PostgreSQL
+          |     +-- SELECT-only runtime DATABASE_URL
           +-- existing X Layer testnet RPC / registry / USD₮0
           +-- official OKX Web3 facilitator
 
 User-assigned identity
   +-- Key Vault Secrets User on candidate Key Vault
-  +-- AcrPull on an existing ACR (no registry is created)
+  +-- AcrPull on the separately approved candidate Basic ACR
 
 Log Analytics: 30-day retention, immediate purge at 30 days, 1 GB/day safety cap
 Optional Cost Management budget: alerts only; it does not stop charges
@@ -34,20 +33,21 @@ The Container Apps environment uses the Consumption workload profile. Every app 
 
 Microsoft documents the selected behaviors in [Container Apps health probes](https://learn.microsoft.com/azure/container-apps/health-probes), [Container Apps workload profiles](https://learn.microsoft.com/azure/container-apps/workload-profiles-overview), [managed identity image pulls](https://learn.microsoft.com/azure/container-apps/managed-identity-image-pull), [Key Vault-backed Container Apps secrets](https://learn.microsoft.com/rest/api/resource-manager/containerapps/container-apps/list-secrets), and [Bicep what-if](https://learn.microsoft.com/azure/azure-resource-manager/bicep/deploy-what-if).
 
-## Writer safety and deployment stages
+## Read-only boundary and deployment stages
 
-The current backend production entry point always performs chain preflight and joins writer-leadership election. It has no truthful read-only production mode. Phase 6 therefore does not invent an ignored `WRITER_ENABLED=false` variable.
+`BACKEND_MODE=read-only` is a genuine application boundary. Configuration rejects x402, writer/target private keys, OKX facilitator credentials, leadership database settings, and execution bypasses. Runtime construction returns `ReadOnlyLeaderGuard` before a leadership session factory can be created. That guard has no start/acquire/poll/session surface and permanently rejects every writer capability. Startup skips indexing and all recovery/reconciliation loops. Mutating REST/MCP routes return 503 without a 402 challenge, and the repository wrapper rejects every write method. The candidate database login is separately restricted to `SELECT`.
 
 The IaC supports two real modes:
 
-1. `candidate`: infrastructure and four fixtures may be modeled, but the backend resource is omitted. This is publication-disabled by construction.
-2. `active`: the backend is created with all production settings and the Phase 5 shared session advisory lock. Bicep requires `writerCutoverApproved=true`; scripts additionally require explicit Phase 7/cost/cutover approvals and `OLD_WRITER_DISABLED=yes`.
+1. `read-only`: the approved Phase 7 backend and fixtures may be deployed, but the backend receives only `backend-readonly-database-url`; it receives no leadership, writer, payer, or facilitator secret.
+2. `active`: retained only for a future separately approved cutover. Bicep requires `writerCutoverApproved=true`; scripts additionally require explicit cost/cutover markers and `OLD_WRITER_DISABLED=yes`.
 
-An Azure backend must never be started while the current Railway writer can operate. The safest pre-hackathon sequence is explicit stop-old, deploy/start Azure, validate, then route traffic. Rollback disables Azure ingress and scales it to zero before Railway is restarted. The shared Phase 5 leadership database remains defense in depth; it is not used to excuse simultaneous writer activation.
+The `foundation` and `fixtures` script stages explicitly set `deployBackend=false`; the `readonly` stage sets `deployBackend=true` with `activationMode=read-only`. Phase 7 never invokes `cutover`.
 
 ## Files
 
 - `bicep/resource-group.bicep`: subscription-scope dedicated resource group.
+- `bicep/registry.bicep`: separately approved Basic ACR with admin credentials disabled.
 - `bicep/main.bicep`: candidate foundation, identity, Key Vault, logging, budget, environment, apps, and configuration.
 - `bicep/modules/container-app.bicep`: one hardened Container App definition.
 - `bicep/modules/acr-pull.bicep`: `AcrPull` assignment on an existing registry.
@@ -57,24 +57,25 @@ An Azure backend must never be started while the current Railway writer can oper
 - `scripts/plan.sh`: renders an ARM plan without contacting Azure.
 - `scripts/resource-group-what-if.sh`: authenticated, non-applying subscription-scope resource-group what-if.
 - `scripts/what-if.sh`: authenticated, non-applying resource-group what-if.
-- `scripts/deploy.sh`: Phase 7-gated foundation/fixture/cutover operations.
+- `scripts/registry-what-if.sh` / `scripts/deploy-registry.sh`: separately gated Basic ACR review and creation.
+- `scripts/deploy.sh`: Phase 7-gated foundation/fixture/read-only operations; future cutover remains separately gated.
 - `scripts/health-acceptance.sh`: read-only HTTPS health and deterministic-manifest checks.
 - `scripts/rollback.sh`: Phase 7-gated Azure writer shutdown; never changes Railway.
 - `COSTS.md`, `ROLLBACK.md`, and `WHAT_IF.md`: cost, recovery, and current what-if status.
 
-## Prerequisites for a later Phase 7
+## Phase 7 order of operations
 
 1. Install Azure CLI 2.76.0 or newer and Bicep CLI.
 2. Run `az login` interactively. The scripts never collect credentials.
 3. If multiple subscriptions are enabled, review the printed list and export `AZURE_SUBSCRIPTION_ID`.
-4. Choose a dedicated candidate resource group and region.
-5. Select an existing safe ACR. If none exists, stop and request approval; these templates do not create one.
-6. Build all five images from a clean immutable commit, tag with all 40 characters, push to the approved registry, and record registry-provided digests.
-7. Copy the example parameter files outside version control, replace every `REPLACE_` marker, and run deployment-mode parameter validation.
-8. Run subscription what-if for the resource group, then group what-if for `main.bicep` with `ProviderNoRbac` validation.
-9. Review [COSTS.md](COSTS.md) and obtain one explicit approval for possible charges.
-10. Only in Phase 7, create foundation, insert Key Vault secret values through an approved secret-management path, then deploy fixtures.
-11. Stop and verify the old writer before the separately approved backend cutover.
+4. Verify the exact approved tenant, subscription, `centralindia` region, and dedicated resource group before any apply.
+5. Run and review the resource-group and separately approved Basic ACR what-if plans.
+6. Create the isolated Supabase project without linking the repository or touching the live project; apply Prisma migrations explicitly to its URL and create a SELECT-only runtime role.
+7. Create the candidate resource group and ACR, then build all five images from a clean archive of the immutable commit using ACR Tasks.
+8. Record registry-provided digests, fill an untracked non-secret parameter file, and run deployment-mode validation.
+9. Run and review the complete resource-group what-if.
+10. Deploy foundation, insert only approved secret values through Key Vault, deploy fixtures, and deploy the read-only backend.
+11. Run health/configuration/Passport acceptance without a rehearsal, payment, wallet signature, or chain transaction. Stop before cutover.
 
 ## Offline validation
 
@@ -93,20 +94,25 @@ infra/azure/scripts/resource-group-what-if.sh \
   <filled-resource-group-parameters.json> \
   <safe-output-file.json>
 
+infra/azure/scripts/registry-what-if.sh \
+  <existing-candidate-resource-group> \
+  <filled-registry-parameters.json> \
+  <safe-output-file.json>
+
 infra/azure/scripts/what-if.sh \
   <existing-candidate-resource-group> \
   <filled-candidate-parameters.json> \
   <safe-output-file.json>
 ```
 
-What-if is a preview, not a cost guarantee. Never replace it with `az deployment ... create` during Phase 6.
+What-if is a preview, not a cost guarantee. Apply scripts require the exact approval markers in addition to reviewed plans.
 
 ## Key Vault values
 
-Only secret names are committed. Required values include two distinct Supabase URLs (ordinary pooled/compatible operational access and direct/session leadership access), separate registry writer and target payer keys, four stable fixture provider keys, and OKX facilitator credentials. Do not use generated production identities, put secrets in parameters, print them, or use the payout private key in the application.
+Only secret names are committed. The read-only backend gets one isolated candidate Supabase URL whose database role has only `SELECT`. It never gets a leadership URL, registry writer key, target payer key, or facilitator credential. Fixtures use four existing stable provider identities; only the healthy paid fixture receives the approved OKX facilitator references. Do not generate production identities, put secrets in parameters, or print secret values.
 
 The managed identity receives only Key Vault Secrets User and AcrPull. Key Vault uses RBAC, purge protection, and 90-day soft delete. Container App configuration contains only versionless Key Vault references; secret rotation does not require committing values.
 
-## Explicit Phase 7 approval
+## Explicit approvals
 
-No apply command is authorized by this directory. Phase 7 requires the user to approve possible Azure charges, the chosen subscription/registry/resource group, and the writer cutover. The scripts enforce separate exact approval markers and still cannot modify Vercel, Railway, Supabase, wallets, or X Layer.
+Apply commands remain locked behind exact local environment markers. The user approved the Phase 7 candidate charges/resources and separately approved a Basic ACR. No writer cutover is approved. The scripts cannot modify Vercel, Railway, wallets, X Layer, or the live Supabase project.

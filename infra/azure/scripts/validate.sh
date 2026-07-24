@@ -11,8 +11,10 @@ require_command jq
 
 "$BICEP" --version
 "$BICEP" build "$RESOURCE_GROUP_BICEP" --outfile /tmp/launchproof-resource-group.json
+"$BICEP" build "${AZURE_DIR}/bicep/registry.bicep" --outfile /tmp/launchproof-azure-registry.json
 "$BICEP" build "$MAIN_BICEP" --outfile /tmp/launchproof-azure-main.json
 node "${AZURE_DIR}/scripts/validate-parameters.mjs" "$PARAMETERS_FILE" example
+node "${AZURE_DIR}/scripts/validate-registry-parameters.mjs" "${AZURE_DIR}/parameters/registry.parameters.example.json" example
 node "${AZURE_DIR}/scripts/validate-resource-group-parameters.mjs" "${AZURE_DIR}/parameters/resource-group.parameters.example.json" example
 node "${AZURE_DIR}/tests/inspect-template.mjs" /tmp/launchproof-azure-main.json "$AZURE_DIR"
 node "${AZURE_DIR}/tests/parameter-safety.mjs" "$AZURE_DIR"

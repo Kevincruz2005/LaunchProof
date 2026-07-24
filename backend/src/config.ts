@@ -62,6 +62,7 @@ export interface XLayerProfile {
 
 const EnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  BACKEND_MODE: z.enum(["writer", "read-only"]).default("writer"),
   PORT: z.coerce.number().int().min(1).max(65_535).default(4000),
   PUBLIC_API_BASE_URL: z.string().url().default("http://localhost:4000"),
   PUBLIC_WEB_BASE_URL: z.string().url().default("http://localhost:3000"),
@@ -180,11 +181,11 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
   if ([parsed.REGISTRY_WRITER_PRIVATE_KEY, parsed.TARGET_PAYER_PRIVATE_KEY].some((key) => key && /^0x0{64}$/i.test(key))) {
     throw new Error("Configured registry writer and target payer keys must be nonzero");
   }
+  const readOnly = parsed.BACKEND_MODE === "read-only";
   const chainRequested = Boolean(
     parsed.XLAYER_RPC_URL ||
       parsed.REGISTRY_ADDRESS ||
       parsed.REGISTRY_DEPLOYMENT_BLOCK > 0n ||
-      parsed.REGISTRY_WRITER_PRIVATE_KEY ||
       parsed.REGISTRY_RUNTIME_CODE_HASH,
   );
   if (
@@ -192,49 +193,74 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
     (!parsed.XLAYER_RPC_URL ||
       !parsed.REGISTRY_ADDRESS ||
       parsed.REGISTRY_DEPLOYMENT_BLOCK === 0n ||
-      !parsed.REGISTRY_WRITER_PRIVATE_KEY ||
       !parsed.REGISTRY_RUNTIME_CODE_HASH)
   ) {
     throw new Error(
-      "Chain publication requires XLAYER_RPC_URL, REGISTRY_ADDRESS, REGISTRY_DEPLOYMENT_BLOCK, REGISTRY_WRITER_PRIVATE_KEY, and REGISTRY_RUNTIME_CODE_HASH",
+      "Chain verification requires XLAYER_RPC_URL, REGISTRY_ADDRESS, REGISTRY_DEPLOYMENT_BLOCK, and REGISTRY_RUNTIME_CODE_HASH",
     );
   }
-  // chainReady means startup preflight can prove the exact deployment before any publication.
+  // chainReady is strictly the public, read-only verification boundary.
   const chainReady = Boolean(
     parsed.XLAYER_RPC_URL &&
       parsed.REGISTRY_ADDRESS &&
       parsed.REGISTRY_DEPLOYMENT_BLOCK > 0n &&
-      parsed.REGISTRY_WRITER_PRIVATE_KEY &&
       parsed.REGISTRY_RUNTIME_CODE_HASH,
   );
-  const productionReady = Boolean(
-    parsed.X402_ENABLED &&
-      parsed.XLAYER_RPC_URL &&
+  const publicationReady = Boolean(chainReady && parsed.REGISTRY_WRITER_PRIVATE_KEY);
+  if (!readOnly && chainRequested && !publicationReady) {
+    throw new Error("Writer mode chain publication also requires REGISTRY_WRITER_PRIVATE_KEY");
+  }
+  const fixtureConfigurationReady = Boolean(
+    Object.values(fixtureUrls).every(Boolean) &&
+      parsed.FIXTURE_HEALTHY_PROVIDER_ADDRESS &&
+      parsed.FIXTURE_INVALID_OUTPUT_PROVIDER_ADDRESS &&
+      parsed.FIXTURE_SCHEMA_DRIFT_PROVIDER_ADDRESS &&
+      parsed.FIXTURE_TIMEOUT_PROVIDER_ADDRESS
+  );
+  const commonProductionReady = Boolean(
+    parsed.XLAYER_RPC_URL &&
       parsed.XLAYER_FALLBACK_RPC_URL &&
       parsed.REGISTRY_ADDRESS &&
       parsed.REGISTRY_DEPLOYMENT_BLOCK > 0n &&
-      parsed.REGISTRY_WRITER_PRIVATE_KEY &&
       parsed.REGISTRY_RUNTIME_CODE_HASH &&
+      parsed.DATABASE_URL &&
+      parsed.RELEASE_IMAGE_TAG &&
+      parsed.RELEASE_IMAGE_DIGEST &&
+      fixtureConfigurationReady
+  );
+  const writerProductionReady = Boolean(
+    commonProductionReady &&
+    parsed.X402_ENABLED &&
+      parsed.REGISTRY_WRITER_PRIVATE_KEY &&
       parsed.TARGET_PAYER_PRIVATE_KEY &&
       parsed.PAYOUT_ADDRESS &&
-      parsed.DATABASE_URL &&
       parsed.LEADERSHIP_DATABASE_URL &&
       parsed.LEADERSHIP_DATABASE_MODE === "session" &&
       parsed.OKX_API_KEY &&
       parsed.OKX_SECRET_KEY &&
-      parsed.OKX_PASSPHRASE &&
-      parsed.RELEASE_IMAGE_TAG &&
-      parsed.RELEASE_IMAGE_DIGEST &&
-      Object.values(fixtureUrls).every(Boolean) &&
-      parsed.FIXTURE_HEALTHY_PROVIDER_ADDRESS &&
-      parsed.FIXTURE_INVALID_OUTPUT_PROVIDER_ADDRESS &&
-      parsed.FIXTURE_SCHEMA_DRIFT_PROVIDER_ADDRESS &&
-      parsed.FIXTURE_TIMEOUT_PROVIDER_ADDRESS,
+      parsed.OKX_PASSPHRASE
   );
+  const forbiddenReadOnlyCapability = Boolean(
+    parsed.X402_ENABLED ||
+      parsed.REGISTRY_WRITER_PRIVATE_KEY ||
+      parsed.TARGET_PAYER_PRIVATE_KEY ||
+      parsed.LEADERSHIP_DATABASE_URL ||
+      parsed.LEADERSHIP_DATABASE_MODE ||
+      parsed.OKX_API_KEY ||
+      parsed.OKX_SECRET_KEY ||
+      parsed.OKX_PASSPHRASE ||
+      parsed.ALLOW_LOCAL_UNPAID_RUNS ||
+      parsed.ALLOW_PRIVATE_TARGETS
+  );
+  if (readOnly && forbiddenReadOnlyCapability) {
+    throw new Error("Read-only backend forbids x402, signing keys, facilitator credentials, leadership configuration, and unpaid/private execution bypasses");
+  }
+  const readOnlyProductionReady = Boolean(commonProductionReady && !forbiddenReadOnlyCapability);
+  const productionReady = readOnly ? readOnlyProductionReady : writerProductionReady;
   if (parsed.NODE_ENV === "production" && !productionReady) {
-    throw new Error(
-      "Production startup refused: x402 facilitator, payout wallet, registry writer, RPC, registry, database, immutable image identity, and four explicit fixture URLs/identities are required",
-    );
+    throw new Error(readOnly
+      ? "Read-only production startup refused: public RPC/registry verification, SELECT-only database, immutable image identity, and four explicit fixture URLs/identities are required"
+      : "Production startup refused: x402 facilitator, payout wallet, registry writer, RPC, registry, database, immutable image identity, and four explicit fixture URLs/identities are required");
   }
   if (productionReady) {
     const providers = Object.values(fixtureAddresses).map((address) => address!.toLowerCase());
@@ -273,6 +299,8 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
     requireExplicitProductionConfig(source, [
       "PUBLIC_API_BASE_URL",
       "PUBLIC_WEB_BASE_URL",
+      "PUBLIC_ALLOWED_ORIGINS",
+      "BACKEND_MODE",
       "BUILD_COMMIT_SHA",
       "RELEASE_IMAGE_TAG",
       "RELEASE_IMAGE_DIGEST",
@@ -284,9 +312,33 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
       "XLAYER_EXPLORER_URL",
       "XLAYER_RPC_URL",
       "XLAYER_FALLBACK_RPC_URL",
+      "REGISTRY_ADDRESS",
+      "REGISTRY_DEPLOYMENT_BLOCK",
+      "REGISTRY_RUNTIME_CODE_HASH",
+      "DATABASE_URL",
+      "FIXTURE_HEALTHY_URL",
+      "FIXTURE_INVALID_OUTPUT_URL",
+      "FIXTURE_SCHEMA_DRIFT_URL",
+      "FIXTURE_TIMEOUT_URL",
+      "FIXTURE_HEALTHY_PROVIDER_ADDRESS",
+      "FIXTURE_INVALID_OUTPUT_PROVIDER_ADDRESS",
+      "FIXTURE_SCHEMA_DRIFT_PROVIDER_ADDRESS",
+      "FIXTURE_TIMEOUT_PROVIDER_ADDRESS",
       "OKX_BASE_URL",
       "X402_ENABLED",
     ]);
+    if (!readOnly) {
+      requireExplicitProductionConfig(source, [
+        "REGISTRY_WRITER_PRIVATE_KEY",
+        "TARGET_PAYER_PRIVATE_KEY",
+        "PAYOUT_ADDRESS",
+        "LEADERSHIP_DATABASE_URL",
+        "LEADERSHIP_DATABASE_MODE",
+        "OKX_API_KEY",
+        "OKX_SECRET_KEY",
+        "OKX_PASSPHRASE",
+      ]);
+    }
     if (!/^[0-9a-f]{40}$/i.test(parsed.BUILD_COMMIT_SHA)) throw new Error("BUILD_COMMIT_SHA must be an immutable 40-character commit in production");
     if (parsed.RELEASE_IMAGE_TAG?.toLowerCase() !== parsed.BUILD_COMMIT_SHA.toLowerCase()) {
       throw new Error("RELEASE_IMAGE_TAG must equal the full BUILD_COMMIT_SHA in production");
@@ -306,17 +358,23 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
       assertProductionUrl(`FIXTURE_${variant.toUpperCase().replaceAll("-", "_")}_URL`, fixtureUrl!, true);
     }
     assertProductionDatabaseUrl(parsed.DATABASE_URL!);
-    assertProductionDatabaseUrl(parsed.LEADERSHIP_DATABASE_URL!);
-    assertProductionCredential("OKX_API_KEY", parsed.OKX_API_KEY!, 12);
-    assertProductionCredential("OKX_SECRET_KEY", parsed.OKX_SECRET_KEY!, 24);
-    assertProductionCredential("OKX_PASSPHRASE", parsed.OKX_PASSPHRASE!, 8);
-    if (isWeakPrivateKey(parsed.REGISTRY_WRITER_PRIVATE_KEY!) || isWeakPrivateKey(parsed.TARGET_PAYER_PRIVATE_KEY!)) {
-      throw new Error("Production private keys must not use zero, repeated-byte, or generated development identities");
+    if (!readOnly) {
+      assertProductionDatabaseUrl(parsed.LEADERSHIP_DATABASE_URL!);
+      assertProductionCredential("OKX_API_KEY", parsed.OKX_API_KEY!, 12);
+      assertProductionCredential("OKX_SECRET_KEY", parsed.OKX_SECRET_KEY!, 24);
+      assertProductionCredential("OKX_PASSPHRASE", parsed.OKX_PASSPHRASE!, 8);
+      if (isWeakPrivateKey(parsed.REGISTRY_WRITER_PRIVATE_KEY!) || isWeakPrivateKey(parsed.TARGET_PAYER_PRIVATE_KEY!)) {
+        throw new Error("Production private keys must not use zero, repeated-byte, or generated development identities");
+      }
+      if (parsed.REGISTRY_WRITER_PRIVATE_KEY!.toLowerCase() === parsed.TARGET_PAYER_PRIVATE_KEY!.toLowerCase()) {
+        throw new Error("Registry writer and target payer must use separate production identities");
+      }
     }
-    if (parsed.REGISTRY_WRITER_PRIVATE_KEY!.toLowerCase() === parsed.TARGET_PAYER_PRIVATE_KEY!.toLowerCase()) {
-      throw new Error("Registry writer and target payer must use separate production identities");
-    }
-    const publicRoleAddresses = [parsed.REGISTRY_ADDRESS!, parsed.PAYOUT_ADDRESS!, ...Object.values(fixtureAddresses) as string[]]
+    const publicRoleAddresses = [
+      parsed.REGISTRY_ADDRESS!,
+      ...(parsed.PAYOUT_ADDRESS ? [parsed.PAYOUT_ADDRESS] : []),
+      ...Object.values(fixtureAddresses) as string[],
+    ]
       .map((address) => address.toLowerCase());
     if (new Set(publicRoleAddresses).size !== publicRoleAddresses.length) {
       throw new Error("Registry, payout, and controlled fixture declaration addresses must be distinct in production");
@@ -337,7 +395,9 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
     fixtureAddresses,
     productionReady,
     chainReady,
-    paymentReady: parsed.NODE_ENV === "production" && productionReady && chain.testnet,
+    publicationReady,
+    readOnly,
+    paymentReady: parsed.NODE_ENV === "production" && !readOnly && productionReady && chain.testnet,
     publicAllowedOrigins: new Set(
       [parsed.PUBLIC_WEB_BASE_URL, ...parsed.PUBLIC_ALLOWED_ORIGINS.split(",")]
         .map((value) => normalizeOrigin(value))

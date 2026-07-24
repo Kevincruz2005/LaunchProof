@@ -53,6 +53,7 @@ try {
   const active = structuredClone(example);
   active.parameters.activationMode.value = "active";
   active.parameters.writerCutoverApproved.value = true;
+  active.parameters.deployBackend.value = true;
   write(active);
   validate("active", true, "valid active cutover was rejected");
 
@@ -62,6 +63,8 @@ try {
     ["wildcard frontend", (document) => { document.parameters.vercelWebOrigin.value = "https://*"; }],
     ["active without approval", (document) => { document.parameters.activationMode.value = "active"; document.parameters.writerCutoverApproved.value = false; }],
     ["active without workloads", (document) => { document.parameters.activationMode.value = "active"; document.parameters.writerCutoverApproved.value = true; document.parameters.deployWorkloads.value = false; }],
+    ["active without backend", (document) => { document.parameters.activationMode.value = "active"; document.parameters.writerCutoverApproved.value = true; document.parameters.deployBackend.value = false; }],
+    ["read-only backend without fixtures", (document) => { document.parameters.deployWorkloads.value = false; document.parameters.deployBackend.value = true; }],
     ["duplicate provider", (document) => { document.parameters.timeoutProviderAddress.value = document.parameters.healthyProviderAddress.value; }],
     ["daily payment cap below per-run cap", (document) => { document.parameters.targetPaymentDailyLimitUsdt0.value = "0.01"; }],
     ["invalid resource prefix", (document) => { document.parameters.namePrefix.value = "Launch Proof"; }],

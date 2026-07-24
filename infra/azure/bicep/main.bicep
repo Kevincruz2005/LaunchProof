@@ -9,17 +9,20 @@ param location string = resourceGroup().location
 param namePrefix string
 
 @allowed([
-  'candidate'
+  'read-only'
   'active'
 ])
-@description('candidate omits the backend completely; active requires an approved stop-old cutover.')
-param activationMode string = 'candidate'
+@description('read-only deploys a backend with no writer/payment capability; active requires a separately approved stop-old cutover.')
+param activationMode string = 'read-only'
 
 @description('Must remain false until Phase 7 approval and proof that the old writer is disabled.')
 param writerCutoverApproved bool = false
 
 @description('Whether to model/deploy the four fixture workloads. Secrets must already exist in Key Vault.')
 param deployWorkloads bool = true
+
+@description('Whether to deploy the backend. Phase 7 permits this only in read-only mode.')
+param deployBackend bool = true
 
 @minLength(40)
 @maxLength(40)
@@ -144,8 +147,11 @@ param budgetEndDate string
 @description('Budget notification recipients. Required only when enableBudget=true.')
 param budgetContactEmails array = []
 
-var backendEnabled = activationMode == 'active'
-var writerSafety = !backendEnabled ? 'candidate-backend-omitted' : writerCutoverApproved && deployWorkloads ? 'active-cutover-approved' : fail('Active backend requires writerCutoverApproved=true and deployWorkloads=true')
+var readOnlyMode = activationMode == 'read-only'
+var backendSafety = !deployBackend || deployWorkloads ? 'backend-dependencies-validated' : fail('Backend deployment requires all four fixture workloads')
+var writerSafety = readOnlyMode
+  ? !writerCutoverApproved ? 'read-only-no-writer' : fail('Read-only mode requires writerCutoverApproved=false')
+  : writerCutoverApproved && deployWorkloads && deployBackend ? 'active-cutover-approved' : fail('Active backend requires writerCutoverApproved=true, deployWorkloads=true, and deployBackend=true')
 var registrySafety = containerRegistryServer == '${containerRegistryName}.azurecr.io' ? 'existing-acr-validated' : fail('Container registry server/name mismatch')
 var imageTagAndDigest = ':${toLower(buildCommit)}@sha256:'
 var imageSafety = startsWith(toLower(backendImage), '${toLower(containerRegistryServer)}/') && contains(toLower(backendImage), imageTagAndDigest) && startsWith(toLower(healthyFixtureImage), '${toLower(containerRegistryServer)}/') && contains(toLower(healthyFixtureImage), imageTagAndDigest) && startsWith(toLower(invalidOutputFixtureImage), '${toLower(containerRegistryServer)}/') && contains(toLower(invalidOutputFixtureImage), imageTagAndDigest) && startsWith(toLower(schemaDriftFixtureImage), '${toLower(containerRegistryServer)}/') && contains(toLower(schemaDriftFixtureImage), imageTagAndDigest) && startsWith(toLower(timeoutFixtureImage), '${toLower(containerRegistryServer)}/') && contains(toLower(timeoutFixtureImage), imageTagAndDigest) ? 'commit-tags-and-digests-validated' : fail('Every image must use the approved existing ACR, the exact build commit tag, and an immutable sha256 digest')
@@ -162,7 +168,8 @@ var tags = {
   environment: activationMode
   commit: buildCommit
   managedBy: 'bicep'
-  phase: 'phase-6-iac'
+  phase: 'phase-7-read-only-candidate'
+  backendSafety: backendSafety
   writerSafety: writerSafety
   registrySafety: registrySafety
   imageSafety: imageSafety
@@ -290,7 +297,15 @@ var targetAllowlist = join([
   '${timeoutName}.${defaultDomain}'
 ], ',')
 
-var backendSecrets = [
+var backendReadOnlySecrets = [
+  {
+    name: 'database-url'
+    keyVaultUrl: '${keyVault.properties.vaultUri}secrets/backend-readonly-database-url'
+    identity: identity.id
+  }
+]
+
+var backendWriterSecrets = [
   {
     name: 'database-url'
     keyVaultUrl: '${keyVault.properties.vaultUri}secrets/backend-database-url'
@@ -328,8 +343,9 @@ var backendSecrets = [
   }
 ]
 
-var backendEnv = [
+var backendCommonEnv = [
   { name: 'NODE_ENV', value: 'production' }
+  { name: 'BACKEND_MODE', value: readOnlyMode ? 'read-only' : 'writer' }
   { name: 'PORT', value: '4000' }
   { name: 'PUBLIC_API_BASE_URL', value: backendOrigin }
   { name: 'PUBLIC_WEB_BASE_URL', value: vercelWebOrigin }
@@ -348,17 +364,8 @@ var backendEnv = [
   { name: 'REGISTRY_ADDRESS', value: registryAddress }
   { name: 'REGISTRY_DEPLOYMENT_BLOCK', value: registryDeploymentBlock }
   { name: 'REGISTRY_RUNTIME_CODE_HASH', value: registryRuntimeCodeHash }
-  { name: 'REGISTRY_WRITER_PRIVATE_KEY', secretRef: 'registry-writer-key' }
-  { name: 'TARGET_PAYER_PRIVATE_KEY', secretRef: 'target-payer-key' }
   { name: 'PAYOUT_ADDRESS', value: payoutAddress }
-  { name: 'OKX_API_KEY', secretRef: 'okx-api-key' }
-  { name: 'OKX_SECRET_KEY', secretRef: 'okx-secret-key' }
-  { name: 'OKX_PASSPHRASE', secretRef: 'okx-passphrase' }
   { name: 'OKX_BASE_URL', value: okxBaseUrl }
-  { name: 'X402_ENABLED', value: 'true' }
-  { name: 'DATABASE_URL', secretRef: 'database-url' }
-  { name: 'LEADERSHIP_DATABASE_URL', secretRef: 'leadership-db-url' }
-  { name: 'LEADERSHIP_DATABASE_MODE', value: 'session' }
   { name: 'TARGET_PAYMENT_MAX_USDT0', value: targetPaymentMaxUsdt0 }
   { name: 'TARGET_PAYMENT_DAILY_LIMIT_USDT0', value: targetPaymentDailyLimitUsdt0 }
   { name: 'TARGET_ALLOWLIST', value: targetAllowlist }
@@ -380,6 +387,26 @@ var backendEnv = [
   { name: 'FIXTURE_SCHEMA_DRIFT_PROVIDER_ADDRESS', value: schemaDriftProviderAddress }
   { name: 'FIXTURE_TIMEOUT_PROVIDER_ADDRESS', value: timeoutProviderAddress }
 ]
+
+var backendReadOnlyEnv = [
+  { name: 'X402_ENABLED', value: 'false' }
+  { name: 'DATABASE_URL', secretRef: 'database-url' }
+]
+
+var backendWriterEnv = [
+  { name: 'REGISTRY_WRITER_PRIVATE_KEY', secretRef: 'registry-writer-key' }
+  { name: 'TARGET_PAYER_PRIVATE_KEY', secretRef: 'target-payer-key' }
+  { name: 'OKX_API_KEY', secretRef: 'okx-api-key' }
+  { name: 'OKX_SECRET_KEY', secretRef: 'okx-secret-key' }
+  { name: 'OKX_PASSPHRASE', secretRef: 'okx-passphrase' }
+  { name: 'X402_ENABLED', value: 'true' }
+  { name: 'DATABASE_URL', secretRef: 'database-url' }
+  { name: 'LEADERSHIP_DATABASE_URL', secretRef: 'leadership-db-url' }
+  { name: 'LEADERSHIP_DATABASE_MODE', value: 'session' }
+]
+
+var backendEnv = concat(backendCommonEnv, readOnlyMode ? backendReadOnlyEnv : backendWriterEnv)
+var backendSecrets = readOnlyMode ? backendReadOnlySecrets : backendWriterSecrets
 
 var fixtureBaseEnv = [
   { name: 'NODE_ENV', value: 'production' }
@@ -546,7 +573,7 @@ module timeoutFixture 'modules/container-app.bicep' = if (deployWorkloads) {
   dependsOn: [keyVaultSecretsUser, acrAccess]
 }
 
-module backend 'modules/container-app.bicep' = if (backendEnabled && deployWorkloads) {
+module backend 'modules/container-app.bicep' = if (deployBackend) {
   name: 'backend-${take(buildCommit, 10)}'
   params: {
     name: backendName
@@ -609,8 +636,8 @@ resource budget 'Microsoft.Consumption/budgets@2024-08-01' = if (enableBudget) {
 }
 
 output activationMode string = activationMode
-output backendDeployed bool = backendEnabled && deployWorkloads
-output backendOrigin string = backendEnabled && deployWorkloads ? backendOrigin : ''
+output backendDeployed bool = deployBackend
+output backendOrigin string = deployBackend ? backendOrigin : ''
 output fixtureOrigins array = deployWorkloads ? [healthyOrigin, invalidOutputOrigin, schemaDriftOrigin, timeoutOrigin] : []
 output keyVaultName string = keyVault.name
 output managedEnvironmentName string = containerEnvironment.name

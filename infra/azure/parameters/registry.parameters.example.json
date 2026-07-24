@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "registryName": { "value": "REPLACE_GLOBALLY_UNIQUE_ACR_NAME" },
+    "location": { "value": "centralindia" },
+    "buildCommit": { "value": "1111111111111111111111111111111111111111" }
+  }
+}

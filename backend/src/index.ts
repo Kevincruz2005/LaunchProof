@@ -5,13 +5,13 @@ import { PrismaRepository } from "./db/prisma-store.js";
 import { validateProductionChain } from "./chain/preflight.js";
 import { RegistryService } from "./chain/registry.js";
 import { LoggingRepository } from "./db/logging-store.js";
+import { ReadOnlyRepository } from "./db/read-only-store.js";
 import { RehearsalService } from "./workers/rehearsal.js";
 import { reconcilePendingLaunchPayments } from "./payments/inbound.js";
 import { reconcilePendingTargetPayments } from "./payments/target.js";
 import {
-  AlwaysLeader,
+  createRuntimeLeadership,
   LeaderCoordinator,
-  postgresAdvisorySessionFactory,
   type LeaderGuard,
   type LeadershipSnapshot,
 } from "./leadership/leader.js";
@@ -19,10 +19,13 @@ import {
 async function main() {
   const config = loadConfig();
   await validateProductionChain(config);
-  const repository = new LoggingRepository(config.DATABASE_URL ? new PrismaRepository() : new MemoryRepository());
-  const leadership: LeaderGuard = config.NODE_ENV === "production"
-    ? new LeaderCoordinator(postgresAdvisorySessionFactory(config.LEADERSHIP_DATABASE_URL!))
-    : new AlwaysLeader();
+  const baseRepository = config.DATABASE_URL ? new PrismaRepository() : new MemoryRepository();
+  const repository = new LoggingRepository(config.readOnly ? new ReadOnlyRepository(baseRepository) : baseRepository);
+  const leadership: LeaderGuard = createRuntimeLeadership({
+    backendMode: config.BACKEND_MODE,
+    nodeEnv: config.NODE_ENV,
+    ...(config.LEADERSHIP_DATABASE_URL ? { leadershipDatabaseUrl: config.LEADERSHIP_DATABASE_URL } : {}),
+  });
   const registry = new RegistryService(config, leadership);
   const rehearsal = new RehearsalService(config, repository, leadership);
   const runLeaderStartup = async (snapshot: LeadershipSnapshot) => {
@@ -39,10 +42,10 @@ async function main() {
     const recovered = await rehearsal.recoverPendingRuns();
     if (recovered > 0) process.stdout.write(JSON.stringify({ event: "runs_recovered", records: recovered, fence: snapshot.fence }) + "\n");
   };
-  if (leadership instanceof LeaderCoordinator) {
+  if (!config.readOnly && leadership instanceof LeaderCoordinator) {
     leadership.onChange((snapshot) => runLeaderStartup(snapshot));
     await leadership.start();
-  } else {
+  } else if (!config.readOnly) {
     await runLeaderStartup(leadership.snapshot());
   }
   const app = createApp(config, repository, { startupPreflightPassed: true, leadership });
@@ -55,28 +58,31 @@ async function main() {
   // X Layer can confirm a valid publication after the request-side receipt wait
   // expires. Keep reconciling the persisted, signed candidate so a mined
   // transaction becomes a completed passport without requiring a redeploy.
-  let publicationReconciliationRunning = false;
-  const publicationReconciliationTimer = setInterval(() => {
-    if (publicationReconciliationRunning || leadership.snapshot().state !== "leader") return;
-    publicationReconciliationRunning = true;
-    void leadership.assertLeader("publication-recovery")
-      .then(() => registry.reconcilePendingPublications(repository))
-      .then((records) => {
-        if (records > 0) process.stdout.write(JSON.stringify({ event: "chain_publications_reconciled", records }) + "\n");
-      })
-      .catch((error: unknown) => {
-        process.stderr.write(JSON.stringify({
-          event: "chain_publication_reconciliation_failed",
-          error_type: error instanceof Error ? error.name : "UnknownError",
-        }) + "\n");
-      })
-      .finally(() => {
-        publicationReconciliationRunning = false;
-      });
-  }, 30_000);
-  publicationReconciliationTimer.unref();
+  let publicationReconciliationTimer: ReturnType<typeof setInterval> | null = null;
+  if (!config.readOnly) {
+    let publicationReconciliationRunning = false;
+    publicationReconciliationTimer = setInterval(() => {
+      if (publicationReconciliationRunning || leadership.snapshot().state !== "leader") return;
+      publicationReconciliationRunning = true;
+      void leadership.assertLeader("publication-recovery")
+        .then(() => registry.reconcilePendingPublications(repository))
+        .then((records) => {
+          if (records > 0) process.stdout.write(JSON.stringify({ event: "chain_publications_reconciled", records }) + "\n");
+        })
+        .catch((error: unknown) => {
+          process.stderr.write(JSON.stringify({
+            event: "chain_publication_reconciliation_failed",
+            error_type: error instanceof Error ? error.name : "UnknownError",
+          }) + "\n");
+        })
+        .finally(() => {
+          publicationReconciliationRunning = false;
+        });
+    }, 30_000);
+    publicationReconciliationTimer.unref();
+  }
   const shutdown = () => {
-    clearInterval(publicationReconciliationTimer);
+    if (publicationReconciliationTimer) clearInterval(publicationReconciliationTimer);
     server.close(() => undefined);
     if (leadership instanceof LeaderCoordinator) void leadership.stop();
   };

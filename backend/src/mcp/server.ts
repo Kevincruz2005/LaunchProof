@@ -31,6 +31,7 @@ export async function handleMcp(
   repository: Repository,
   config: Config,
   passportGate: PassportGateAdapter,
+  registry: RegistryService = new RegistryService(config),
 ) {
   const body = aliasBody(request.body);
   const server = new McpServer({ name: "LaunchProof", version: "1.0.0" });
@@ -77,7 +78,7 @@ export async function handleMcp(
       async ({ run_id }) => {
         const cached = await repository.getRun(run_id);
         const cache = cached && "canonical_evidence" in cached ? cached : null;
-        const chainRun = config.chainReady ? await new RegistryService(config).readPublishedRun(run_id, cache) : null;
+        const chainRun = config.chainReady ? await registry.readPublishedRun(run_id, cache) : null;
         const run = config.chainReady
           ? chainRun ?? (cached && !("canonical_evidence" in cached) ? cached : null)
           : cached;

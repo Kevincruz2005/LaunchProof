@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 import { createApp } from "../src/rest/app.js";
 import { MemoryRepository } from "../src/db/store.js";
+import { ReadOnlyRepository } from "../src/db/read-only-store.js";
 
 const config = loadConfig({
   NODE_ENV: "test",
@@ -14,6 +15,40 @@ const config = loadConfig({
 const app = createApp(config);
 
 describe("public and paid routes", () => {
+  it("keeps public trust reads available while rejecting every rehearsal/payment route in read-only mode", async () => {
+    const inner = new MemoryRepository();
+    const readOnly = loadConfig({
+      NODE_ENV: "test",
+      BACKEND_MODE: "read-only",
+      PUBLIC_API_BASE_URL: "http://localhost:4000",
+      PUBLIC_WEB_BASE_URL: "http://localhost:3000",
+      BUILD_COMMIT_SHA: "test-read-only",
+      X402_ENABLED: "false",
+      ALLOW_LOCAL_UNPAID_RUNS: "false",
+      ALLOW_PRIVATE_TARGETS: "false",
+    });
+    const readOnlyApp = createApp(readOnly, new ReadOnlyRepository(inner));
+    for (const path of ["/api/rehearsals", "/api/renewals", "/mcp/rehearse", "/mcp/renew"]) {
+      const response = await request(readOnlyApp).post(path).send({
+        url: "https://example.com",
+        idempotency_key: `read-only-${path.replaceAll("/", "-")}`,
+      });
+      expect(response.status).toBe(503);
+      expect(response.body.error).toBe("read_only_candidate");
+      expect(response.headers["payment-required"]).toBeUndefined();
+    }
+    expect(await inner.recentRuns(10)).toEqual([]);
+    const health = await request(readOnlyApp).get("/healthz");
+    expect(health.status).toBe(200);
+    expect(health.body.backend_mode).toBe("read-only");
+    expect(health.body.dependencies.x402).toBe("disabled_read_only");
+    expect(health.body.dependencies.writer_leadership).toEqual({ state: "disabled", fence: null });
+    const card = await request(readOnlyApp).get("/.well-known/launchproof.json");
+    expect(card.body.tools).toEqual([]);
+    expect(card.body.public_tools).toEqual(["get_service_passport", "check_service_passport"]);
+    expect(card.body.payments.x402_enabled).toBe(false);
+  });
+
   it("keeps health and project card free", async () => {
     expect((await request(app).get("/healthz")).status).toBe(200);
     const card = await request(app).get("/.well-known/launchproof.json");

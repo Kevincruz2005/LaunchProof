@@ -3,9 +3,10 @@
   "contentVersion": "1.0.0.0",
   "parameters": {
     "namePrefix": { "value": "launchproof" },
-    "activationMode": { "value": "candidate" },
+    "activationMode": { "value": "read-only" },
     "writerCutoverApproved": { "value": false },
     "deployWorkloads": { "value": true },
+    "deployBackend": { "value": true },
     "buildCommit": { "value": "1111111111111111111111111111111111111111" },
     "sourceRepositoryUrl": { "value": "https://github.com/REPLACE_OWNER/REPLACE_REPOSITORY" },
     "vercelWebOrigin": { "value": "https://REPLACE_FRONTEND_HOST" },

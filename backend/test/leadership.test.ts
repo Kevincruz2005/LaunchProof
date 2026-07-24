@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   LeaderCoordinator,
   NotLeaderError,
+  ReadOnlyLeaderGuard,
+  createRuntimeLeadership,
   type AdvisorySession,
 } from "../src/leadership/leader.js";
 
@@ -56,6 +58,36 @@ class FakeSession implements AdvisorySession {
 }
 
 describe("writer leadership and fencing", () => {
+  it("gives read-only mode no acquisition surface and permanently denies every capability", async () => {
+    const guard = new ReadOnlyLeaderGuard();
+    expect(guard.snapshot()).toEqual({ state: "disabled", fence: null });
+    expect(guard.signal().aborted).toBe(true);
+    expect("start" in guard).toBe(false);
+    expect("pollNow" in guard).toBe(false);
+    expect("session" in guard).toBe(false);
+    for (const capability of [
+      "inbound-payment", "target-payment", "registry-publication", "payment-recovery",
+      "publication-recovery", "run-execution", "run-recovery", "chain-index",
+    ] as const) {
+      await expect(guard.assertLeader(capability)).rejects.toBeInstanceOf(NotLeaderError);
+    }
+  });
+
+  it("selects read-only leadership before considering any session factory", () => {
+    let sessionsCreated = 0;
+    const guard = createRuntimeLeadership({
+      backendMode: "read-only",
+      nodeEnv: "production",
+      sessionFactory: async () => {
+        sessionsCreated += 1;
+        throw new Error("must never be called");
+      },
+    });
+    expect(guard).toBeInstanceOf(ReadOnlyLeaderGuard);
+    expect(guard).not.toBeInstanceOf(LeaderCoordinator);
+    expect(sessionsCreated).toBe(0);
+  });
+
   it("elects exactly one leader across concurrent processes", async () => {
     const database = new IsolatedAdvisoryDatabase();
     const processes = Array.from({ length: 12 }, (_, index) =>
