@@ -6,6 +6,7 @@ if (!compiledFile || !azureDirectory) throw new Error("usage: inspect-template.m
 const template = JSON.parse(readFileSync(compiledFile, "utf8"));
 const mainSource = readFileSync(join(azureDirectory, "bicep/main.bicep"), "utf8");
 const appSource = readFileSync(join(azureDirectory, "bicep/modules/container-app.bicep"), "utf8");
+const backendDockerfile = readFileSync(join(azureDirectory, "../../backend/Dockerfile"), "utf8");
 
 function resources(value, result = []) {
   if (!value || typeof value !== "object") return result;
@@ -52,6 +53,9 @@ requireSource(/BACKEND_REPLICA_COUNT', value: '1'/, "backend replica safety decl
 requireSource(/X402_ENABLED', value: 'true'/, "paid healthy/backend mode is missing");
 requireSource(/var backendReadOnlyEnv = \[[\s\S]*X402_ENABLED', value: 'false'[\s\S]*DATABASE_URL', secretRef: 'database-url'/, "read-only backend environment is missing");
 requireSource(/backend-readonly-database-url/, "read-only backend database secret is missing");
+if (!backendDockerfile.includes('if [ \\"$BACKEND_MODE\\" = \\"read-only\\" ]; then exec node backend/dist/index.js; else')) {
+  throw new Error("read-only backend image must start without attempting database migrations");
+}
 requireSource(/fixture-healthy-provider-private-key/, "healthy stable Key Vault identity is missing");
 requireSource(/fixture-invalid-output-provider-private-key/, "invalid-output stable Key Vault identity is missing");
 requireSource(/fixture-schema-drift-provider-private-key/, "schema-drift stable Key Vault identity is missing");

@@ -20,4 +20,4 @@ COPY --from=build /app/backend/prisma ./backend/prisma
 COPY --from=build /app/backend/node_modules ./backend/node_modules
 COPY --from=build /app/schema ./schema
 USER node
-CMD ["sh", "-c", "node backend/node_modules/prisma/build/index.js migrate deploy --schema backend/prisma/schema.prisma && node backend/dist/index.js"]
+CMD ["sh", "-c", "if [ \"$BACKEND_MODE\" = \"read-only\" ]; then exec node backend/dist/index.js; else node backend/node_modules/prisma/build/index.js migrate deploy --schema backend/prisma/schema.prisma && exec node backend/dist/index.js; fi"]
