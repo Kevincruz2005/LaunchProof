@@ -983,3 +983,91 @@ git diff --check
 Results: backend typecheck passed; 133/133 backend tests passed; all three Bicep entry points compiled using Bicep 0.45.15; parameter, rendered-template, resource-group, health-acceptance, Bash, and ShellCheck safety suites passed. The local IaC test still confirms that `main.bicep` itself creates no registry or database; ACR creation is isolated in the separately approved template. No cloud identity had been queried and no cloud resource had been created at this checkpoint.
 
 On 2026-07-24 the first complete Azure resource-group what-if stopped with `WorkloadProfilePropertyNotSupported`: Azure Central India does not accept environment-level `minimumCount` or `maximumCount` on the Consumption workload profile. No resource from that failed what-if was applied. The user explicitly replied `APPROVE CONSUMPTION PROFILE FIX`, authorizing removal of only those two unsupported environment-profile properties. Per-app `minReplicas=1` and `maxReplicas=1` remain mandatory and covered by the rendered-template test.
+
+### Phase 7 completed candidate deployment
+
+Phase 7 deployed only the approved read-only candidate from isolated branch `upgrade/passportgate-phase1-20260719`. The branch has no upstream and was not pushed. The live/deployment-linked refs were not checked out or modified. The immutable deployed source commit is:
+
+```text
+81d8bf43cc12942b0155563ae310cc86a3aa5acf
+```
+
+An initial exact-SHA candidate at `904fcff325fc11247d6c90a69629d9a6c0d0ecd7` passed health and fail-closed mutation tests but revealed that historical fixture verification was coupled to the fixture's current hostname. That revision was superseded before acceptance. The isolated fix recognizes a historical fixture host in read-only mode only when its stable provider identity is one of the configured fixture identities. Writer mode remains strictly bound to the current configured origin and identity. Two focused tests prove both sides of that boundary, and all 135 backend tests pass.
+
+The final immutable image set is:
+
+| Workload | ACR digest |
+| --- | --- |
+| backend | `sha256:dc60ea7376bfd092d346ce9b23879c8b7c8e2e416c1a8c375d7c6cc3d4c622c8` |
+| healthy fixture | `sha256:6ec47946037be0cb3a7cb08f45f3e9248a26a9a37395a933b49b38d055b38c59` |
+| invalid-output fixture | `sha256:776d0afb8e0bf8a49eed062e7400827da8c1f24e9fa17c2154a61ba30c86d96d` |
+| schema-drift fixture | `sha256:e6759e11d2a85f9af0087e0bd84e0f733a8bbc9ef9e943d5c179ce1bc3931db9` |
+| timeout fixture | `sha256:80017cc481c6182a6a90a7a54f28fda46cc38c281da07d81fb4ec32c9c2b8d9d` |
+
+All five images were verified in `launchproofp73207de1c` before apply and deployed with the exact 40-character source SHA plus digest. Azure ACR Tasks were unavailable to the Students subscription (`TasksOperationsNotAllowed`), so checksum-verified upstream BuildKit v0.31.2 was used locally. No development/default/generated production identity was used.
+
+Created Azure resources in approved group `launchproof-phase7-candidate`:
+
+- Basic ACR `launchproofp73207de1c`, with admin and anonymous pull disabled;
+- Container Apps environment `launchproof-4n5cwi34-cae`;
+- Key Vault `launchproof-4n5cwi34-kv`;
+- Log Analytics workspace `launchproof-4n5cwi34-logs`;
+- managed identity `launchproof-identity`;
+- backend `https://launchproof-backend.delightfultree-b2769bfb.centralindia.azurecontainerapps.io`;
+- healthy fixture `https://launchproof-fixture-healthy.delightfultree-b2769bfb.centralindia.azurecontainerapps.io`;
+- invalid-output fixture `https://launchproof-fixture-invalid.delightfultree-b2769bfb.centralindia.azurecontainerapps.io`;
+- schema-drift fixture `https://launchproof-fixture-drift.delightfultree-b2769bfb.centralindia.azurecontainerapps.io`;
+- timeout fixture `https://launchproof-fixture-timeout.delightfultree-b2769bfb.centralindia.azurecontainerapps.io`; and
+- monthly resource-group budget `launchproof-monthly-budget`, amount `10`.
+
+The final authenticated what-if succeeded before the final apply. It contained the same five apps, environment, identity, Key Vault/managed-identity secret role, capped logs, budget, ignored pre-existing approved ACR, and the expected preview limitation for the cross-scope `AcrPull` assignment. It contained no delete, Azure database, writer activation, or external routing change.
+
+The isolated Supabase candidate is project `launchproof-phase7-candidate`, reference `nozauounvbtwpjxajifg`, region `ap-south-1`, Nano/free. The four existing Prisma migrations were applied. Runtime role `launchproof_readonly` has no superuser, create-database, create-role, replication, or RLS-bypass capability; it has SELECT but no mutation privileges and defaults to read-only transactions. A real INSERT was rejected. The live LaunchProof Supabase project was never linked, connected, pushed to, or modified.
+
+### Phase 7 acceptance evidence
+
+The final no-payment acceptance established:
+
+- all five Container Apps are provisioned/running, use single-active-revision mode, have exactly one traffic-serving revision, and retain per-app `minReplicas=1` and `maxReplicas=1`;
+- backend health reports `backend_mode=read-only`, database/registry reachable, x402 `disabled_read_only`, and leadership `disabled`;
+- the backend has no registry-writer, target-payer, facilitator, leadership, local-unpaid, or private-target capability; the only backend secret reference is the SELECT-only database URL through Key Vault;
+- temporary human Key Vault roles were removed after secret insertion and each deployment preflight;
+- all mutating REST/MCP endpoints return HTTP 503 `read_only_candidate` without any payment challenge;
+- all four Launch Contracts are deterministic and pass strict schema, exact source revision, stable secret-backed provider identity, same-origin endpoint, and declaration-signature verification;
+- REST and MCP PassportGate results validate against the published schema, the exact Vercel origin passes CORS, and an untrusted origin is denied;
+- prior run `0xd348748baf9fc8cde21ea1b0bca66db65cc98b82ecd3c7b7299ca9d48b14aa1d` reconstructs with no database cache and independently verifies `match=true`, including chain record, canonical JCS, all hashes, provider signature, gate/storage/link semantics, both testnet transfers, registry runtime, and semantic evidence;
+- X Layer primary RPC reports chain 1952, registry `0x99313b45b234e06eba1fc8fe7bee101b7f2f2c37` matches runtime hash `0xe367ae4a310bf429601d9cc43d4191e7d2c9e90056d3183918ba7cc8ac872553`, and official test USD₮0 `0x9e29b3aada05bf2d2c827af80bd28dc0b9b4fb0c` has deployed bytecode;
+- the existing Railway writer remains healthy, registry/database reachable, and x402 startup-preflight ready, while Azure is provably incapable of writer leadership; and
+- Vercel remains reachable and was not reconfigured.
+
+The official configured secondary RPC `https://xlayertestrpc.okx.com/terigon` reset connections from this workstation during the final probe even though it remains listed in current OKX documentation. It remains configured after the healthy official primary and was not silently replaced with an unofficial endpoint.
+
+Final local regression:
+
+```text
+pnpm check
+infra/azure/scripts/validate.sh
+infra/azure/scripts/verify-images.sh <protected candidate parameters>
+infra/azure/scripts/health-acceptance.sh
+git diff --check
+```
+
+`pnpm check` passes security scanning, contract compilation/ABI refresh, lint, all workspace typechecks, 84 PassportGate tests, 135 backend tests, 29 frontend tests, 10 fixture tests, and all production builds: 258 application tests total. The contract source/tests are unchanged; the compile/ABI consistency step passes. Infrastructure Bicep, parameter, rendered-template, Bash, and ShellCheck validation pass.
+
+The approved Basic ACR estimate observed before creation was approximately USD 0.1666/day plus storage/transfer. Container Apps, Key Vault operations, logging, registry storage/pulls, and traffic can also charge. The budget query immediately after deployment reported amount `10` and current spend `0.0 INR`, but billing can lag and zero cost is not claimed.
+
+No payment, wallet signature, testnet transaction, registry publication, writer cutover, Railway/Vercel setting change, live Supabase access, protected-branch modification, or branch push occurred.
+
+## Phase 7 acceptance gate
+
+- [x] Explicit Phase 7 approval was confirmed and recorded before resource creation.
+- [x] Only approved candidate Azure resources were created.
+- [x] Source came from the isolated branch; no deployed branch was changed.
+- [x] Live Vercel, Railway, live Supabase, registry, and wallets were unchanged.
+- [x] Azure backend is provably read-only/publication-disabled/payment-disabled.
+- [x] Exactly one existing Railway writer remains active.
+- [x] Candidate health, fixtures, schemas, signatures, REST/MCP/Judge access, and prior Passport read-only verification pass.
+- [x] Immutable commit and all five image digests are recorded.
+- [x] Costs, deviations, commands, and results are documented without secrets.
+
+Phase 7 stops here. Azure writer activation, Railway shutdown, Vercel cutover, paid rehearsal, any transaction, branch push, and Phase 8 remain unapproved and were not performed.
