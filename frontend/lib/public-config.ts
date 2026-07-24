@@ -45,12 +45,12 @@ function configuredChainAnchors(): {
       registryDeploymentBlock: process.env.NEXT_PUBLIC_REGISTRY_DEPLOYMENT_BLOCK || "1",
     };
   }
-  const chainId = required("NEXT_PUBLIC_CHAIN_ID");
+  const chainId = required("NEXT_PUBLIC_CHAIN_ID", process.env.NEXT_PUBLIC_CHAIN_ID);
   if (chainId !== "1952") throw new Error("NEXT_PUBLIC_CHAIN_ID must be X Layer testnet chain 1952.");
-  const rpcUrl = configuredPublicUrl("NEXT_PUBLIC_XLAYER_RPC_URL", required("NEXT_PUBLIC_XLAYER_RPC_URL"));
-  const registryAddress = configuredAddress("NEXT_PUBLIC_REGISTRY_ADDRESS", required("NEXT_PUBLIC_REGISTRY_ADDRESS"));
-  const payoutAddress = configuredAddress("NEXT_PUBLIC_PAYOUT_ADDRESS", required("NEXT_PUBLIC_PAYOUT_ADDRESS"));
-  const registryDeploymentBlock = required("NEXT_PUBLIC_REGISTRY_DEPLOYMENT_BLOCK");
+  const rpcUrl = configuredPublicUrl("NEXT_PUBLIC_XLAYER_RPC_URL", required("NEXT_PUBLIC_XLAYER_RPC_URL", process.env.NEXT_PUBLIC_XLAYER_RPC_URL));
+  const registryAddress = configuredAddress("NEXT_PUBLIC_REGISTRY_ADDRESS", required("NEXT_PUBLIC_REGISTRY_ADDRESS", process.env.NEXT_PUBLIC_REGISTRY_ADDRESS));
+  const payoutAddress = configuredAddress("NEXT_PUBLIC_PAYOUT_ADDRESS", required("NEXT_PUBLIC_PAYOUT_ADDRESS", process.env.NEXT_PUBLIC_PAYOUT_ADDRESS));
+  const registryDeploymentBlock = required("NEXT_PUBLIC_REGISTRY_DEPLOYMENT_BLOCK", process.env.NEXT_PUBLIC_REGISTRY_DEPLOYMENT_BLOCK);
   if (!/^[1-9][0-9]*$/.test(registryDeploymentBlock)) throw new Error("NEXT_PUBLIC_REGISTRY_DEPLOYMENT_BLOCK must be a positive block number.");
   if (registryAddress.toLowerCase() === payoutAddress.toLowerCase()) throw new Error("Frontend registry and payout anchors must be distinct.");
   return { chainId: 1952, rpcUrl, registryAddress, payoutAddress, registryDeploymentBlock };
@@ -86,8 +86,8 @@ function configuredAddress(name: string, value: string): `0x${string}` {
   return value as `0x${string}`;
 }
 
-function required(name: string): string {
-  const value = process.env[name]?.trim();
+function required(name: string, configured: string | undefined): string {
+  const value = configured?.trim();
   if (!value) throw new Error(`${name} must be configured for the LaunchProof frontend.`);
   return value;
 }
