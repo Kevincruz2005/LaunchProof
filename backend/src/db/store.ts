@@ -67,6 +67,7 @@ export interface Repository {
   getRun(runId: string): Promise<StoredRun | null>;
   getByIdempotencyKey(key: string): Promise<StoredRun | null>;
   recentRuns(limit: number): Promise<RunRecord[]>;
+  passportsForTarget(target: string, provider: string): Promise<RunRecord[]>;
   savePayment(payment: PaymentReference, runId: string): Promise<void>;
   authorizeRun(payment: PaymentReference, runId: string, capacity?: RunCapacity): Promise<void>;
   claimRunCapacity(runId: string, capacity: RunCapacity, leaseExpiresAt: string): Promise<void>;
@@ -148,6 +149,14 @@ export class MemoryRepository implements Repository {
       .filter((run): run is RunRecord => "canonical_evidence" in run)
       .sort((a, b) => b.generated_at.localeCompare(a.generated_at))
       .slice(0, limit);
+  }
+
+  async passportsForTarget(target: string, provider: string): Promise<RunRecord[]> {
+    return [...this.runs.values()]
+      .filter((run): run is RunRecord => "canonical_evidence" in run)
+      .filter((run) => run.canonical_evidence.target === target)
+      .filter((run) => run.provider_declaration.provider_address.toLowerCase() === provider.toLowerCase())
+      .sort((left, right) => right.generated_at.localeCompare(left.generated_at));
   }
 
   async savePayment(payment: PaymentReference, runId: string): Promise<void> {

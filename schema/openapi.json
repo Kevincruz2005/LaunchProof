@@ -9,6 +9,21 @@
     "/healthz": {
       "get": { "operationId": "health", "responses": { "200": { "description": "Current dependency state", "content": { "application/json": { "schema": { "type": "object" } } } } } }
     },
+    "/api/v1/passport-gate/check": {
+      "post": {
+        "operationId": "checkServicePassport",
+        "summary": "Return a chain-backed trust decision without spending or starting a rehearsal",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "./passport-gate.schema.json#/$defs/Input" } } }
+        },
+        "responses": {
+          "200": { "description": "ALLOW, WARN, BLOCK, or REHEARSAL_REQUIRED", "content": { "application/json": { "schema": { "$ref": "./passport-gate.schema.json#/$defs/DecisionResult" } } } },
+          "400": { "description": "Invalid PassportGate input" },
+          "503": { "description": "Independent verification unavailable; no trust decision", "content": { "application/json": { "schema": { "$ref": "./passport-gate.schema.json#/$defs/Unavailable" } } } }
+        }
+      }
+    },
     "/api/rehearsals": {
       "post": {
         "operationId": "createGenesisRehearsal",
@@ -67,6 +82,7 @@
     "/fixtures": { "get": { "operationId": "listFixtures", "responses": { "200": { "description": "Controlled fixture catalog", "content": { "application/json": { "schema": { "type": "object" } } } } } } },
     "/docs/quick-verify": { "get": { "operationId": "getQuickVerify", "responses": { "200": { "description": "Exact four-step reviewer path", "content": { "application/json": { "schema": { "type": "object" } } } } } } },
     "/schema/openapi.json": { "get": { "operationId": "getOpenApi", "responses": { "200": { "description": "This OpenAPI document" } } } },
+    "/schema/passport-gate.schema.json": { "get": { "operationId": "getPassportGateSchema", "responses": { "200": { "description": "PassportGate REST and MCP JSON Schema" } } } },
     "/.well-known/launchproof.json": { "get": { "operationId": "getProjectCard", "responses": { "200": { "description": "LaunchProof project card", "content": { "application/json": { "schema": { "type": "object" } } } } } } }
   },
   "components": {

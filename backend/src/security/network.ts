@@ -30,10 +30,17 @@ export function validateTargetUrl(raw: string, allowPrivate = false): URL {
   if (url.protocol !== "https:" && !(allowPrivate && url.protocol === "http:")) throw new UnsafeTargetError("Only public HTTPS targets are allowed");
   if (url.username || url.password) throw new UnsafeTargetError("URL credentials are forbidden");
   if (url.port && url.port !== "443" && !allowPrivate) throw new UnsafeTargetError("Non-standard HTTPS ports are forbidden");
-  if (url.hostname.endsWith(".local") || url.hostname.endsWith(".internal")) {
+  const hostname = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
+  if (
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname.endsWith(".local") ||
+    hostname.endsWith(".internal") ||
+    hostname.endsWith(".home.arpa")
+  ) {
     throw new UnsafeTargetError("Local hostnames are forbidden");
   }
-  if (ipaddr.isValid(url.hostname) && !allowPrivate && !isPublicAddress(url.hostname)) {
+  if (ipaddr.isValid(hostname) && !allowPrivate && !isPublicAddress(hostname)) {
     throw new UnsafeTargetError("Private, reserved, or special-use addresses are forbidden");
   }
   return url;

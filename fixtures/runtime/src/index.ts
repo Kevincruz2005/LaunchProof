@@ -35,6 +35,9 @@ function config(variant: FixtureVariant): FixtureConfig {
   if (!providerKey || !/^0x[0-9a-fA-F]{64}$/.test(providerKey)) {
     throw new Error("Fixture requires a unique FIXTURE_PROVIDER_PRIVATE_KEY; generate it outside the process and never commit it");
   }
+  if (production && (process.env.FIXTURE_PROVIDER_KEY_SOURCE !== "external-secret" || isWeakPrivateKey(providerKey))) {
+    throw new Error("Production fixture refuses default/generated development keys; provide an external-secret identity");
+  }
   const port = Number(process.env.PORT ?? 4100);
   if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("Fixture PORT must be an integer between 1 and 65535");
   const bindHost = process.env.FIXTURE_BIND_HOST ?? "127.0.0.1";
@@ -43,11 +46,22 @@ function config(variant: FixtureVariant): FixtureConfig {
   }
   const publicBaseUrl = required("PUBLIC_BASE_URL").replace(/\/$/, "");
   const parsedPublicUrl = new URL(publicBaseUrl);
-  if (parsedPublicUrl.origin !== publicBaseUrl || (production && parsedPublicUrl.protocol !== "https:")) {
+  if (
+    parsedPublicUrl.origin !== publicBaseUrl ||
+    (production && (parsedPublicUrl.protocol !== "https:" || isUnsafePublicHostname(parsedPublicUrl.hostname)))
+  ) {
     throw new Error("PUBLIC_BASE_URL must be a URL origin; production fixtures require HTTPS");
   }
   const sourceRevision = required("SOURCE_REVISION");
   if (!/^[0-9a-f]{40}$/i.test(sourceRevision)) throw new Error("Fixture SOURCE_REVISION must be the exact immutable 40-character Git commit SHA");
+  if (production) {
+    if (required("RELEASE_IMAGE_TAG").toLowerCase() !== sourceRevision.toLowerCase()) {
+      throw new Error("Production fixture RELEASE_IMAGE_TAG must equal SOURCE_REVISION");
+    }
+    if (!/^sha256:[0-9a-f]{64}$/i.test(required("RELEASE_IMAGE_DIGEST"))) {
+      throw new Error("Production fixture requires an immutable RELEASE_IMAGE_DIGEST");
+    }
+  }
   if (required("XLAYER_TESTNET") !== "true" || process.env.ALLOW_XLAYER_MAINNET === "true") {
     throw new Error("Controlled public fixtures are restricted to X Layer testnet");
   }
@@ -68,6 +82,14 @@ function config(variant: FixtureVariant): FixtureConfig {
   const paymentRecipient = process.env.PAYMENT_RECIPIENT as `0x${string}` | undefined;
   if (x402Enabled && (!paymentRecipient || !/^0x[0-9a-fA-F]{40}$/.test(paymentRecipient) || /^0x0{40}$/i.test(paymentRecipient) || !process.env.OKX_API_KEY || !process.env.OKX_SECRET_KEY || !process.env.OKX_PASSPHRASE)) {
     throw new Error("Paid fixture requires recipient and OKX facilitator credentials");
+  }
+  if (production && x402Enabled) {
+    if (paymentRecipient!.toLowerCase() === privateKeyToAccount(providerKey).address.toLowerCase()) {
+      throw new Error("Production fixture provider and payment recipient identities must be distinct");
+    }
+    assertProductionCredential("OKX_API_KEY", process.env.OKX_API_KEY!, 12);
+    assertProductionCredential("OKX_SECRET_KEY", process.env.OKX_SECRET_KEY!, 24);
+    assertProductionCredential("OKX_PASSPHRASE", process.env.OKX_PASSPHRASE!, 8);
   }
   const paymentAmount = required("PAYMENT_AMOUNT_ATOMIC");
   if (!/^[0-9]+$/.test(paymentAmount) || BigInt(paymentAmount) < 1n || BigInt(paymentAmount) > 100_000n) {
@@ -110,6 +132,32 @@ function required(name: string): string {
   return value;
 }
 
+function isWeakPrivateKey(value: string): boolean {
+  const body = value.slice(2).toLowerCase();
+  return /^0+$/.test(body) || /^(..)(?:\1){31}$/.test(body);
+}
+
+function isUnsafePublicHostname(rawHostname: string): boolean {
+  const hostname = rawHostname.replace(/\.$/, "").toLowerCase();
+  return hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname.endsWith(".local") ||
+    hostname.endsWith(".internal") ||
+    hostname.endsWith(".example") ||
+    hostname.endsWith(".invalid") ||
+    hostname.endsWith(".test") ||
+    /^(?:127\.|10\.|192\.168\.|169\.254\.)/.test(hostname);
+}
+
+function assertProductionCredential(name: string, value: string, minimumLength: number): void {
+  const normalized = value.trim().toLowerCase();
+  if (
+    value.trim().length < minimumLength ||
+    /^(?:test|dev|demo|example|sample|placeholder|changeme|password|secret|key|passphrase|launchproof)[-_0-9]*$/i.test(normalized) ||
+    /(?:placeholder|change[-_ ]?me|replace[-_ ]?me|your[-_ ])/i.test(normalized)
+  ) throw new Error(`${name} is missing or contains a development/placeholder credential`);
+}
+
 export function createFixtureApp(variant: FixtureVariant): express.Express {
   const settings = config(variant);
   const account = privateKeyToAccount(settings.providerKey);
@@ -119,6 +167,9 @@ export function createFixtureApp(variant: FixtureVariant): express.Express {
   app.use(express.json({ limit: "32kb" }));
   app.use((request, response, next) => {
     response.setHeader("x-content-type-options", "nosniff");
+    response.setHeader("content-security-policy", "default-src 'none'; frame-ancestors 'none'");
+    response.setHeader("referrer-policy", "no-referrer");
+    response.setHeader("cache-control", "no-store");
     response.setHeader("x-launchproof-fixture", variant);
     if (request.path === "/paid/mcp") return paidMiddleware(request, response, next);
     next();
@@ -158,7 +209,8 @@ export function createFixtureApp(variant: FixtureVariant): express.Express {
     });
   });
   app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
-    response.status(500).json({ error: error instanceof Error ? error.message : "fixture_error" });
+    process.stderr.write(`${JSON.stringify({ event: "fixture_error", error_type: error instanceof Error ? error.name.slice(0, 80) : "unknown" })}\n`);
+    response.status(500).json({ error: "fixture_error" });
   });
   return app;
 }

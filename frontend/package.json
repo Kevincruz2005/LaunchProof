@@ -19,11 +19,16 @@
     "viem": "^2.33.0"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "6.6.3",
+    "@testing-library/react": "16.3.0",
+    "@testing-library/user-event": "14.6.1",
     "@types/node": "^24.0.15",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "eslint": "8.57.1",
     "eslint-config-next": "15.5.20",
+    "axe-core": "4.10.3",
+    "jsdom": "26.1.0",
     "typescript": "^5.8.3",
     "vitest": "^3.2.4"
   }

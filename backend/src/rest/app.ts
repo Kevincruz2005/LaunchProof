@@ -26,37 +26,31 @@ import { RehearsalService } from "../workers/rehearsal.js";
 import { handleMcp } from "../mcp/server.js";
 import { RegistryService } from "../chain/registry.js";
 import { hashJcs } from "../evidence/canonical.js";
+import { PassportGateValidationError } from "@launchproof/passport-gate";
+import {
+  PassportGateService,
+  passportGateRequestSchema,
+  passportGateTransportBody,
+  type PassportGateAdapter,
+} from "../passport-gate/service.js";
+import { AlwaysLeader, type LeaderGuard } from "../leadership/leader.js";
 
 export function createApp(
   config: Config,
   repository: Repository = new MemoryRepository(),
-  options: { startupPreflightPassed?: boolean } = {},
+  options: { startupPreflightPassed?: boolean; passportGate?: PassportGateAdapter; leadership?: LeaderGuard } = {},
 ) {
   const app = express();
   const requestSchema = protectedRequestArgumentsSchema.extend({
     url: rehearsalTargetSchemaFor(config.ALLOW_PRIVATE_TARGETS),
   });
   const paidRequestSchema = protectedRequestArgumentsSchema;
-  const service = new RehearsalService(config, repository);
-  const registry = new RegistryService(config);
+  const leadership = options.leadership ?? new AlwaysLeader();
+  const service = new RehearsalService(config, repository, leadership);
+  const registry = new RegistryService(config, leadership);
+  const passportGate = options.passportGate ?? new PassportGateService(config, repository, registry);
   app.disable("x-powered-by");
   if (config.NODE_ENV === "production") app.set("trust proxy", 1);
-  app.use(cors({
-    origin: (origin, callback) => {
-      if (!origin || allowedOrigin(origin, config.publicAllowedOrigins)) return callback(null, true);
-      return callback(new Error("Origin is not allowed"));
-    },
-    methods: ["GET", "POST"],
-    // OKX x402-fetch 0.1.0 adds Access-Control-Expose-Headers to its paid
-    // retry. It is response-only and ignored by LaunchProof, but accepting it
-    // here keeps that official client compatible while our browser wrapper
-    // removes it before sending.
-    allowedHeaders: ["content-type", "payment", "payment-signature", "x-payment", "x-launchproof-local-run", "idempotency-key", "access-control-expose-headers"],
-    // x402-fetch reads the initial challenge from PAYMENT-REQUIRED in browser
-    // JavaScript. CORS hides non-safelisted response headers unless the API
-    // explicitly exposes them.
-    exposedHeaders: ["payment-required", "payment-response", "location"],
-  }));
   app.use((_request, response, next) => {
     const requestId = randomUUID();
     response.locals.requestId = requestId;
@@ -64,9 +58,30 @@ export function createApp(
     response.setHeader("x-content-type-options", "nosniff");
     response.setHeader("referrer-policy", "no-referrer");
     response.setHeader("content-security-policy", "default-src 'none'; frame-ancestors 'none'");
+    response.setHeader("permissions-policy", "camera=(), microphone=(), geolocation=(), payment=()");
+    response.setHeader("cache-control", "no-store");
     response.setHeader("x-launchproof-build", config.BUILD_COMMIT_SHA);
     next();
   });
+  app.use(cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigin(origin, config.publicAllowedOrigins)) return callback(null, true);
+      return callback(new HttpError(403, "Origin is not allowed"));
+    },
+    methods: ["GET", "POST"],
+    allowedHeaders: [
+      "content-type",
+      "payment",
+      "payment-signature",
+      "x-payment",
+      "idempotency-key",
+      ...(config.ALLOW_LOCAL_UNPAID_RUNS ? ["x-launchproof-local-run"] : []),
+    ],
+    // x402-fetch reads the initial challenge from PAYMENT-REQUIRED in browser
+    // JavaScript. CORS hides non-safelisted response headers unless the API
+    // explicitly exposes them.
+    exposedHeaders: ["payment-required", "payment-response", "location"],
+  }));
   app.use(express.json({ limit: "64kb", strict: true }));
 
   const freeLimiter = rateLimit({
@@ -121,7 +136,7 @@ export function createApp(
       },
       false,
     );
-  }, reservePaidRequest));
+  }, reservePaidRequest, leadership));
 
   app.get("/healthz", freeLimiter, asyncRoute(async (_request, response) => {
     const [databaseReachable, registryReachable] = await Promise.all([
@@ -142,6 +157,7 @@ export function createApp(
           : "not_ready",
         registry: registryReachable ? "reachable" : config.chainReady ? "unreachable" : "not_configured",
         database: databaseReachable ? (config.DATABASE_URL ? "reachable" : "memory_cache") : "unreachable",
+        writer_leadership: leadership.snapshot(),
       },
     });
   }));
@@ -175,14 +191,20 @@ export function createApp(
   }));
 
   app.post("/mcp/rehearse", (request, response, next) => {
-    void handleMcp(request, response, "rehearse", service, repository, config).catch(next);
+    void handleMcp(request, response, "rehearse", service, repository, config, passportGate).catch(next);
   });
   app.post("/mcp/renew", (request, response, next) => {
-    void handleMcp(request, response, "renew", service, repository, config).catch(next);
+    void handleMcp(request, response, "renew", service, repository, config, passportGate).catch(next);
   });
   app.post("/mcp/public", freeLimiter, (request, response, next) => {
-    void handleMcp(request, response, "public", service, repository, config).catch(next);
+    void handleMcp(request, response, "public", service, repository, config, passportGate).catch(next);
   });
+
+  app.post("/api/v1/passport-gate/check", freeLimiter, asyncRoute(async (request, response) => {
+    const input = passportGateRequestSchema.parse(request.body);
+    const result = await passportGate.check(input);
+    response.status(result.operational_status === "UNAVAILABLE" ? 503 : 200).json(passportGateTransportBody(result));
+  }));
 
   app.get("/runs", freeLimiter, asyncRoute(async (_request, response) => {
     response.json({ runs: await repository.recentRuns(20), build_commit: config.BUILD_COMMIT_SHA });
@@ -278,11 +300,16 @@ export function createApp(
   const openapi = JSON.parse(readFileSync(path.join(root, "schema", "openapi.json"), "utf8")) as Record<string, unknown>;
   app.get("/schema/openapi.json", freeLimiter, (_request, response) => response.json({ ...openapi, servers: [{ url: config.PUBLIC_API_BASE_URL }] }));
   app.get("/schema/launch-contract.schema.json", freeLimiter, (_request, response) => response.sendFile(path.join(root, "schema", "launch-contract.schema.json")));
+  app.get("/schema/passport-gate.schema.json", freeLimiter, (_request, response) => response.sendFile(path.join(root, "schema", "passport-gate.schema.json")));
   app.get("/schema/registry.abi.json", freeLimiter, (_request, response) => response.sendFile(path.join(root, "schema", "registry.abi.json")));
 
   app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
     if (error instanceof z.ZodError) {
       response.status(400).json({ error: "invalid_request", issues: error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })) });
+      return;
+    }
+    if (error instanceof PassportGateValidationError) {
+      response.status(400).json({ error: "invalid_request", reason_code: error.code, message: error.message });
       return;
     }
     const status = error instanceof HttpError ? error.status : 500;
@@ -329,7 +356,7 @@ function projectCard(config: Config) {
     tools: ["rehearse_launch_contract"],
     compatibility_tools: ["preflight_service"],
     public_mcp_endpoint: `${api}/mcp/public`,
-    public_tools: ["get_service_passport"],
+    public_tools: ["get_service_passport", "check_service_passport"],
     public_compatibility_tools: ["get_run"],
     price_usdt: GENESIS_AMOUNT,
     prices_usdt: { genesis_rehearsal: "0.01", renew_passport: "0.10" },
@@ -342,6 +369,8 @@ function projectCard(config: Config) {
     demo_video_url: config.DEMO_VIDEO_URL ?? null,
     status_url: `${web}/status`,
     rest_endpoint: `${api}/api`,
+    passport_gate_rest_endpoint: `${api}/api/v1/passport-gate/check`,
+    passport_gate_schema_url: `${api}/schema/passport-gate.schema.json`,
     chain: publicChainPolicy(config),
     payments: publicPaymentPolicy(config),
     deployment: { backend_replicas: config.BACKEND_REPLICA_COUNT, model: "single-replica" },
@@ -421,7 +450,11 @@ function mcpArguments(body: unknown): unknown {
 
 function allowedOrigin(origin: string, allowed: ReadonlySet<string>): boolean {
   try {
-    return allowed.has(new URL(origin).origin);
+    const url = new URL(origin);
+    const exactOrigin = origin.endsWith("/") ? origin.slice(0, -1) : origin;
+    return !url.username && !url.password && !url.search && !url.hash &&
+      (url.pathname === "/" || url.pathname === "") &&
+      url.origin === exactOrigin && allowed.has(url.origin);
   } catch {
     return false;
   }

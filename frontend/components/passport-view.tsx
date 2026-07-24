@@ -120,7 +120,7 @@ export function PassportView({ passport }: { passport: Passport }) {
 
 interface EvidenceDetails {
   network?: string;
-  execution_mode?: "local" | "testnet" | "mainnet";
+  execution_mode?: "local" | "testnet";
   timings?: { observed_p95_ms: number; total_ms: number };
   fixed_sample?: Invocation;
   invalid_input?: Invocation;

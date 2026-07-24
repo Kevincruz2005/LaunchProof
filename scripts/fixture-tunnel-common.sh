@@ -91,6 +91,23 @@ prepare_fixture_settings() {
   XLAYER_USDT0_ADDRESS_VALUE="$(require_value XLAYER_USDT0_ADDRESS)"
   NODE_ENV_VALUE="$(env_value NODE_ENV)"
   NODE_ENV_VALUE="${NODE_ENV_VALUE:-development}"
+  FIXTURE_PROVIDER_KEY_SOURCE_VALUE="$(env_value FIXTURE_PROVIDER_KEY_SOURCE)"
+  RELEASE_IMAGE_TAG_VALUE="$(env_value RELEASE_IMAGE_TAG)"
+  RELEASE_IMAGE_DIGEST_VALUE="$(env_value RELEASE_IMAGE_DIGEST)"
+  if [[ "$NODE_ENV_VALUE" == "production" ]]; then
+    [[ "$FIXTURE_PROVIDER_KEY_SOURCE_VALUE" == "external-secret" ]] || {
+      printf 'ERROR: production fixtures require FIXTURE_PROVIDER_KEY_SOURCE=external-secret\n' >&2
+      return 1
+    }
+    [[ "$RELEASE_IMAGE_TAG_VALUE" == "$SOURCE_REVISION" ]] || {
+      printf 'ERROR: production fixture RELEASE_IMAGE_TAG must equal the exact source commit\n' >&2
+      return 1
+    }
+    [[ "$RELEASE_IMAGE_DIGEST_VALUE" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || {
+      printf 'ERROR: production fixtures require an immutable RELEASE_IMAGE_DIGEST\n' >&2
+      return 1
+    }
+  fi
   FIXTURE_X402_ENABLED_VALUE="$(env_value FIXTURE_X402_ENABLED)"
   FIXTURE_X402_ENABLED_VALUE="${FIXTURE_X402_ENABLED_VALUE:-false}"
   [[ "$FIXTURE_X402_ENABLED_VALUE" == "true" || "$FIXTURE_X402_ENABLED_VALUE" == "false" ]] || {
@@ -161,6 +178,9 @@ start_fixture_processes() {
       export PUBLIC_BASE_URL="${PUBLIC_URLS[$index]%/}"
       export SOURCE_REVISION
       export FIXTURE_PROVIDER_PRIVATE_KEY="${PRIVATE_KEYS[$index]}"
+      export FIXTURE_PROVIDER_KEY_SOURCE="$FIXTURE_PROVIDER_KEY_SOURCE_VALUE"
+      export RELEASE_IMAGE_TAG="$RELEASE_IMAGE_TAG_VALUE"
+      export RELEASE_IMAGE_DIGEST="$RELEASE_IMAGE_DIGEST_VALUE"
       export XLAYER_CHAIN_ID="$XLAYER_CHAIN_ID_VALUE"
       export XLAYER_TESTNET="$XLAYER_TESTNET_VALUE"
       export ALLOW_XLAYER_MAINNET="$ALLOW_XLAYER_MAINNET_VALUE"

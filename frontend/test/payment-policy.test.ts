@@ -165,6 +165,29 @@ describe("frontend testnet payment policy", () => {
     expect(request.mock.calls.at(-1)?.[0].method).toBe("wallet_revokePermissions");
   });
 
+  it("reports a missing wallet without making a network or payment request", async () => {
+    vi.stubGlobal("window", { sessionStorage: { getItem: () => null, setItem: vi.fn(), removeItem: vi.fn() } });
+    await expect(connectWallet(projectCard(), true)).rejects.toThrow(/Install or unlock OKX Wallet/);
+  });
+
+  it("preserves wallet rejection and wrong-network rejection as user-visible failures", async () => {
+    const rejected = Object.assign(new Error("User rejected the wallet request"), { code: 4001 });
+    const permissionRequest = vi.fn().mockRejectedValue(rejected);
+    vi.stubGlobal("window", { okxwallet: { request: permissionRequest } });
+    await expect(connectWallet(projectCard(), true)).rejects.toBe(rejected);
+
+    const account = `0x${"77".repeat(20)}`;
+    const wrongChainRequest = vi.fn(async ({ method }: { method: string }) => {
+      if (method === "eth_requestAccounts") return [account];
+      if (method === "eth_chainId") return "0x1";
+      if (method === "wallet_switchEthereumChain") throw rejected;
+      throw new Error(`Unexpected method ${method}`);
+    });
+    vi.stubGlobal("window", { okxwallet: { request: wrongChainRequest } });
+    await expect(connectWallet(projectCard())).rejects.toBe(rejected);
+    expect(wrongChainRequest).toHaveBeenCalledWith({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x7a0" }] });
+  });
+
   it("removes the response-only CORS header from an OKX paid retry", async () => {
     const sent: Request[] = [];
     const safeFetch = withoutResponseOnlyCorsHeaders(async (input, init) => {

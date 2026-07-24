@@ -20,6 +20,16 @@ function configure(variant: FixtureVariant): void {
   process.env.OKX_BASE_URL = "https://web3.okx.com";
 }
 
+function configureProduction(variant: FixtureVariant): void {
+  configure(variant);
+  process.env.NODE_ENV = "production";
+  process.env.FIXTURE_PROVIDER_PRIVATE_KEY = `0x${"0123456789abcdef".repeat(4)}`;
+  process.env.FIXTURE_PROVIDER_KEY_SOURCE = "external-secret";
+  process.env.PUBLIC_BASE_URL = `https://${variant}.fixtures.launchproof.dev`;
+  process.env.RELEASE_IMAGE_TAG = sourceRevision;
+  process.env.RELEASE_IMAGE_DIGEST = `sha256:${"b".repeat(64)}`;
+}
+
 describe("controlled fixture runtime", () => {
   beforeEach(() => configure("healthy"));
   afterEach(() => {
@@ -28,6 +38,7 @@ describe("controlled fixture runtime", () => {
       "XLAYER_TESTNET", "ALLOW_XLAYER_MAINNET", "XLAYER_CHAIN_ID", "XLAYER_NETWORK",
       "XLAYER_USDT0_ADDRESS", "X402_ENABLED", "PAYMENT_AMOUNT_ATOMIC", "OKX_BASE_URL",
       "PAYMENT_RECIPIENT", "OKX_API_KEY", "OKX_SECRET_KEY", "OKX_PASSPHRASE",
+      "FIXTURE_PROVIDER_KEY_SOURCE", "RELEASE_IMAGE_TAG", "RELEASE_IMAGE_DIGEST",
     ]) delete process.env[name];
   });
 
@@ -75,8 +86,34 @@ describe("controlled fixture runtime", () => {
   });
 
   it("refuses a production healthy fixture without x402", () => {
-    configure("healthy");
-    process.env.NODE_ENV = "production";
+    configureProduction("healthy");
     expect(() => createFixtureApp("healthy")).toThrow(/requires.*x402/i);
+  });
+
+  it("refuses generated/default fixture identities in production", () => {
+    configure("invalid-output");
+    process.env.NODE_ENV = "production";
+    process.env.FIXTURE_PROVIDER_KEY_SOURCE = "external-secret";
+    expect(() => createFixtureApp("invalid-output")).toThrow(/default\/generated development keys/i);
+  });
+
+  it("refuses placeholder/local origins and missing immutable image identity in production", () => {
+    configureProduction("invalid-output");
+    process.env.PUBLIC_BASE_URL = "https://fixture.example";
+    expect(() => createFixtureApp("invalid-output")).toThrow(/production fixtures require HTTPS/i);
+
+    configureProduction("invalid-output");
+    delete process.env.RELEASE_IMAGE_DIGEST;
+    expect(() => createFixtureApp("invalid-output")).toThrow(/RELEASE_IMAGE_DIGEST/i);
+  });
+
+  it("refuses placeholder facilitator credentials in a paid production fixture", () => {
+    configureProduction("healthy");
+    process.env.X402_ENABLED = "true";
+    process.env.PAYMENT_RECIPIENT = `0x${"2".repeat(40)}`;
+    process.env.OKX_API_KEY = "synthetic-api-credential";
+    process.env.OKX_SECRET_KEY = "secret";
+    process.env.OKX_PASSPHRASE = "synthetic-passphrase";
+    expect(() => createFixtureApp("healthy")).toThrow(/placeholder credential/i);
   });
 });

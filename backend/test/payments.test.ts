@@ -4,7 +4,8 @@ import { loadConfig } from "../src/config.js";
 import { MemoryRepository } from "../src/db/store.js";
 import { rehearsalTargetSchemaFor, requireBoundIdempotencyKey, settledPaymentReference, settlementProgress } from "../src/payments/inbound.js";
 import { RehearsalService } from "../src/workers/rehearsal.js";
-import { normalizeTargetPaymentRequest, targetReceiptAmountMatches } from "../src/payments/target.js";
+import { normalizeTargetPaymentRequest, targetReceiptAmountMatches, TargetPaymentService } from "../src/payments/target.js";
+import type { LaunchContract } from "../src/launch-contract/schema.js";
 
 const payout = `0x${"34".repeat(20)}` as const;
 const transaction = `0x${"ab".repeat(32)}` as const;
@@ -171,6 +172,32 @@ describe("settled LaunchProof payment references", () => {
     const reset = await repository.getRun(run.run_id);
     expect(reset?.state).toBe("payment_settled");
     expect(reset && !("canonical_evidence" in reset) ? reset.target_payment_attempt : undefined).toBeNull();
+  });
+
+  it("never creates a replacement payment while an ambiguous signed target authorization awaits recovery", async () => {
+    const repository = new MemoryRepository();
+    const service = new RehearsalService(config, repository);
+    const run = await service.reserve("https://fixture.example", "ambiguous-target-no-retry");
+    await repository.updateState(run.run_id, "target_payment_or_not_tested");
+    await repository.recordTargetPaymentAttempt(run.run_id, {
+      asset: config.chain.usdt0Address,
+      network: config.chain.network,
+      payer,
+      recipient: payout,
+      amount_atomic: "10000",
+      route: "https://fixture.example/paid",
+      source_revision: "a".repeat(40),
+      authorization_nonce: `0x${"cd".repeat(32)}`,
+      authorization_valid_before: "2000000000",
+      start_block: "100",
+      created_at: "2026-07-20T00:00:00.000Z",
+      transaction_hash: null,
+      payment_payload: { signature: "public-signed-authorization" },
+    });
+    const target = new TargetPaymentService(config, repository);
+    await expect(target.pay({} as LaunchContract, run.run_id)).rejects.toThrow(/replacement payment is forbidden/);
+    expect((await repository.pendingTargetPaymentAttempts()).map((item) => item.run_id)).toEqual([run.run_id]);
+    expect(await repository.getTargetPaymentForRun(run.run_id)).toBeNull();
   });
 
   it("preserves headers and body when the x402 retry arrives as a Request object", async () => {

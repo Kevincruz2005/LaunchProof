@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://launchproof.dev/schema/passport-gate.schema.json",
+  "title": "LaunchProof PassportGate REST and MCP contract",
+  "oneOf": [
+    { "$ref": "#/$defs/Input" },
+    { "$ref": "#/$defs/Result" }
+  ],
+  "$defs": {
+    "Address": { "type": "string", "pattern": "^0x(?!0{40}$)[0-9a-fA-F]{40}$" },
+    "Bytes32": { "type": "string", "pattern": "^0x[0-9a-fA-F]{64}$" },
+    "SourceRevision": { "type": "string", "pattern": "^[0-9a-fA-F]{40}$" },
+    "Input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["launch_contract_url"],
+      "properties": {
+        "launch_contract_url": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 2048,
+          "pattern": "^https://[^?#\\s]+$",
+          "description": "Public HTTPS provider origin or exact Launch Contract URL. Credentials, query strings, fragments, and private-network resolution are rejected."
+        },
+        "warn_age_hours": { "type": "number", "minimum": 0 },
+        "max_age_hours": { "type": "number", "exclusiveMinimum": 0 },
+        "expected_provider_address": { "$ref": "#/$defs/Address" },
+        "expected_source_revision": { "$ref": "#/$defs/SourceRevision" }
+      }
+    },
+    "Gates": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["discoverable", "contract_correct", "fresh_challenge", "safe_to_rehearse", "paid_delivery"],
+      "properties": {
+        "discoverable": { "type": "boolean" },
+        "contract_correct": { "type": "boolean" },
+        "fresh_challenge": { "type": "boolean" },
+        "safe_to_rehearse": { "type": "boolean" },
+        "paid_delivery": { "type": "boolean" }
+      }
+    },
+    "ContractIdentity": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["launchContractUrl", "manifestHash", "providerAddress", "sourceRevision", "identityHash"],
+      "properties": {
+        "launchContractUrl": { "type": "string", "format": "uri" },
+        "manifestHash": { "$ref": "#/$defs/Bytes32" },
+        "providerAddress": { "$ref": "#/$defs/Address" },
+        "sourceRevision": { "$ref": "#/$defs/SourceRevision" },
+        "identityHash": { "$ref": "#/$defs/Bytes32" }
+      }
+    },
+    "Settlement": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["paymentId", "network", "asset", "amountAtomic", "assetDecimals", "payer", "recipient", "transactionHash", "blockTimestamp"],
+      "properties": {
+        "paymentId": { "type": "string" },
+        "network": { "const": "eip155:1952" },
+        "asset": { "$ref": "#/$defs/Address" },
+        "amountAtomic": { "type": "string", "pattern": "^[0-9]+$" },
+        "assetDecimals": { "type": "integer", "minimum": 0 },
+        "payer": { "$ref": "#/$defs/Address" },
+        "recipient": { "$ref": "#/$defs/Address" },
+        "transactionHash": { "$ref": "#/$defs/Bytes32" },
+        "blockTimestamp": { "type": "string", "format": "date-time" }
+      }
+    },
+    "ExplorerLinks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["publicationTransaction", "inboundSettlement", "providerSettlement"],
+      "properties": {
+        "publicationTransaction": { "type": ["string", "null"], "format": "uri" },
+        "inboundSettlement": { "type": ["string", "null"], "format": "uri" },
+        "providerSettlement": { "type": ["string", "null"], "format": "uri" }
+      }
+    },
+    "RehearsalAction": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["kind", "url", "requiresExplicitPaymentApproval", "automaticallyExecuted"],
+      "properties": {
+        "kind": { "enum": ["REHEARSE", "RENEW"] },
+        "url": { "type": "string", "format": "uri" },
+        "requiresExplicitPaymentApproval": { "const": true },
+        "automaticallyExecuted": { "const": false }
+      }
+    },
+    "DecisionResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operational_status", "decision", "reason_codes", "explanation", "observed_at", "passport_age_hours", "warn_age_hours", "max_age_hours", "expires_at", "contract_identity", "provider_address", "source_revision", "run_id", "passport_url", "status", "gates", "independent_verification", "database_chain_match", "inbound_settlement", "provider_settlement", "evidence_publication_transaction", "explorer_links", "evidence_hash", "manifest_hash", "input_hash", "result_hash", "rehearsal_action"],
+      "properties": {
+        "operational_status": { "const": "AVAILABLE" },
+        "decision": { "enum": ["ALLOW", "WARN", "BLOCK", "REHEARSAL_REQUIRED"] },
+        "reason_codes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } },
+        "explanation": { "type": "string" },
+        "observed_at": { "type": "string", "format": "date-time" },
+        "passport_age_hours": { "type": ["number", "null"], "minimum": 0 },
+        "warn_age_hours": { "type": "number", "minimum": 0 },
+        "max_age_hours": { "type": "number", "exclusiveMinimum": 0 },
+        "expires_at": { "type": ["string", "null"], "format": "date-time" },
+        "contract_identity": { "$ref": "#/$defs/ContractIdentity" },
+        "provider_address": { "oneOf": [{ "$ref": "#/$defs/Address" }, { "type": "null" }] },
+        "source_revision": { "oneOf": [{ "$ref": "#/$defs/SourceRevision" }, { "type": "null" }] },
+        "run_id": { "type": ["string", "null"] },
+        "passport_url": { "type": ["string", "null"], "format": "uri" },
+        "status": { "type": ["string", "null"], "enum": ["Verified", "NeedsAttention", "NotRehearsable", null] },
+        "gates": { "$ref": "#/$defs/Gates" },
+        "independent_verification": { "type": "boolean" },
+        "database_chain_match": { "type": ["boolean", "null"] },
+        "inbound_settlement": { "$ref": "#/$defs/Settlement" },
+        "provider_settlement": { "$ref": "#/$defs/Settlement" },
+        "evidence_publication_transaction": { "oneOf": [{ "$ref": "#/$defs/Bytes32" }, { "type": "null" }] },
+        "explorer_links": { "$ref": "#/$defs/ExplorerLinks" },
+        "evidence_hash": { "oneOf": [{ "$ref": "#/$defs/Bytes32" }, { "type": "null" }] },
+        "manifest_hash": { "oneOf": [{ "$ref": "#/$defs/Bytes32" }, { "type": "null" }] },
+        "input_hash": { "oneOf": [{ "$ref": "#/$defs/Bytes32" }, { "type": "null" }] },
+        "result_hash": { "oneOf": [{ "$ref": "#/$defs/Bytes32" }, { "type": "null" }] },
+        "rehearsal_action": { "$ref": "#/$defs/RehearsalAction" }
+      }
+    },
+    "Unavailable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error", "retry_safe", "operational_status", "decision", "reason_codes", "explanation", "observed_at"],
+      "properties": {
+        "error": { "const": "verification_unavailable" },
+        "retry_safe": { "const": true },
+        "operational_status": { "const": "UNAVAILABLE" },
+        "decision": { "type": "null" },
+        "reason_codes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["RPC_UNAVAILABLE", "RPC_TIMEOUT", "RPC_RATE_LIMITED", "INDEX_UNAVAILABLE", "CONTRACT_FETCH_UNAVAILABLE", "INTERNAL_UNAVAILABLE"] } },
+        "explanation": { "type": "string" },
+        "observed_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "Result": {
+      "oneOf": [
+        { "$ref": "#/$defs/DecisionResult" },
+        { "$ref": "#/$defs/Unavailable" }
+      ]
+    }
+  }
+}

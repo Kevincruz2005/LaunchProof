@@ -32,6 +32,7 @@ export class LoggingRepository implements Repository {
   getRun(runId: string) { return this.inner.getRun(runId); }
   getByIdempotencyKey(key: string) { return this.inner.getByIdempotencyKey(key); }
   recentRuns(limit: number) { return this.inner.recentRuns(limit); }
+  passportsForTarget(target: string, provider: string) { return this.inner.passportsForTarget(target, provider); }
 
   async savePayment(payment: PaymentReference, runId: string): Promise<void> {
     await this.inner.savePayment(payment, runId);

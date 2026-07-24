@@ -1,4 +1,5 @@
 import type { Network, PaymentRequirements } from "@okxweb3/x402-fetch";
+import { PUBLIC_API_BASE } from "../public-config";
 
 export type GateState = "pass" | "fail" | "not_tested";
 export type PassportStatus = "verified" | "needs-attention" | "not-rehearsable";
@@ -98,6 +99,87 @@ export interface ProjectCard {
   payments: PublicPaymentPolicy;
 }
 
+export interface ControlledFixture {
+  variant: string;
+  label: "fixture";
+  launch_contract: string | null;
+  health: string | null;
+  source: string;
+  declaration_address: string | null;
+  intended_outcome: string;
+}
+
+export type PassportGateDecision = "ALLOW" | "WARN" | "BLOCK" | "REHEARSAL_REQUIRED";
+
+export interface PassportGateSettlement {
+  paymentId: string;
+  network: "eip155:1952";
+  asset: `0x${string}`;
+  amountAtomic: string;
+  assetDecimals: number;
+  payer: `0x${string}`;
+  recipient: `0x${string}`;
+  transactionHash: `0x${string}`;
+  blockTimestamp: string;
+}
+
+export interface PassportGateDecisionResult {
+  operational_status: "AVAILABLE";
+  decision: PassportGateDecision;
+  reason_codes: string[];
+  explanation: string;
+  observed_at: string;
+  passport_age_hours: number | null;
+  warn_age_hours: number;
+  max_age_hours: number;
+  expires_at: string | null;
+  contract_identity: {
+    launchContractUrl: string;
+    manifestHash: `0x${string}`;
+    providerAddress: `0x${string}`;
+    sourceRevision: string;
+    identityHash: `0x${string}`;
+  } | null;
+  provider_address: `0x${string}` | null;
+  source_revision: string | null;
+  run_id: string | null;
+  passport_url: string | null;
+  status: "Verified" | "NeedsAttention" | "NotRehearsable" | null;
+  gates: Record<"discoverable" | "contract_correct" | "fresh_challenge" | "safe_to_rehearse" | "paid_delivery", boolean> | null;
+  independent_verification: boolean;
+  database_chain_match: boolean | null;
+  inbound_settlement: PassportGateSettlement | null;
+  provider_settlement: PassportGateSettlement | null;
+  evidence_publication_transaction: `0x${string}` | null;
+  explorer_links: {
+    publicationTransaction: string | null;
+    inboundSettlement: string | null;
+    providerSettlement: string | null;
+  };
+  evidence_hash: `0x${string}` | null;
+  manifest_hash: `0x${string}` | null;
+  input_hash: `0x${string}` | null;
+  result_hash: `0x${string}` | null;
+  rehearsal_action: {
+    kind: "REHEARSE" | "RENEW";
+    url: string;
+    requiresExplicitPaymentApproval: true;
+    automaticallyExecuted: false;
+  } | null;
+}
+
+export interface PassportGateUnavailableResult {
+  error: "verification_unavailable";
+  retry_safe: true;
+  operational_status: "UNAVAILABLE";
+  decision: null;
+  reason_codes: string[];
+  explanation: string;
+  observed_at: string;
+}
+
+export type PassportGateResult = PassportGateDecisionResult | PassportGateUnavailableResult;
+
 export interface PendingRun {
   runId?: string;
   idempotencyKey: string;
@@ -107,7 +189,7 @@ export interface PendingRun {
   createdAt: string;
 }
 
-export const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
+export const API_BASE = PUBLIC_API_BASE;
 export const PENDING_RUN_STORAGE_KEY = "launchproof.pending-run.v1";
 const XLAYER_TESTNET_CHAIN_ID = 1952;
 const XLAYER_TESTNET_NETWORK: Network = "eip155:1952";
@@ -138,6 +220,33 @@ export async function apiGet<T>(path: string): Promise<T> {
 export async function getProjectCard(): Promise<ProjectCard> {
   const value = await apiGet<unknown>("/.well-known/launchproof.json");
   return parseProjectCard(value);
+}
+
+export async function getControlledFixtures(): Promise<ControlledFixture[]> {
+  const value = await apiGet<{ fixtures: unknown[] }>("/fixtures");
+  if (!Array.isArray(value.fixtures) || !value.fixtures.every(isControlledFixture)) {
+    throw new Error("The fixture catalog response is invalid.");
+  }
+  return value.fixtures;
+}
+
+export async function checkServicePassport(launchContractUrl: string): Promise<PassportGateResult> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}/api/v1/passport-gate/check`, {
+      method: "POST",
+      cache: "no-store",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ launch_contract_url: launchContractUrl }),
+    });
+  } catch {
+    throw new Error("PassportGate could not reach the verification API. No trust decision was made.");
+  }
+  const body = await responseJson<unknown>(response);
+  if (response.status === 503 && isPassportGateUnavailable(body)) return body;
+  if (!response.ok) throw new Error(await responseError(response, body));
+  if (!isPassportGateDecision(body)) throw new Error("PassportGate returned an invalid decision contract. No trust decision was made.");
+  return body;
 }
 
 export async function pollRun(
@@ -642,6 +751,93 @@ async function responseError(response: Response, parsed?: unknown): Promise<stri
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function isPassportGateUnavailable(value: unknown): value is PassportGateUnavailableResult {
+  return isObject(value)
+    && value.error === "verification_unavailable"
+    && value.retry_safe === true
+    && value.operational_status === "UNAVAILABLE"
+    && value.decision === null
+    && Array.isArray(value.reason_codes)
+    && value.reason_codes.every((reason) => typeof reason === "string")
+    && typeof value.explanation === "string"
+    && typeof value.observed_at === "string";
+}
+
+function isPassportGateDecision(value: unknown): value is PassportGateDecisionResult {
+  if (!isObject(value) || value.operational_status !== "AVAILABLE") return false;
+  if (!["ALLOW", "WARN", "BLOCK", "REHEARSAL_REQUIRED"].includes(String(value.decision))) return false;
+  if (!Array.isArray(value.reason_codes) || !value.reason_codes.every((reason) => typeof reason === "string")) return false;
+  if (typeof value.explanation !== "string" || typeof value.observed_at !== "string") return false;
+  if (!isNullableFiniteNumber(value.passport_age_hours)
+    || typeof value.warn_age_hours !== "number"
+    || typeof value.max_age_hours !== "number"
+    || (value.expires_at !== null && typeof value.expires_at !== "string")) return false;
+  if (value.contract_identity !== null && (!isObject(value.contract_identity)
+    || typeof value.contract_identity.launchContractUrl !== "string"
+    || !isBytes32(value.contract_identity.manifestHash)
+    || !isAddress(value.contract_identity.providerAddress)
+    || !isSourceRevision(value.contract_identity.sourceRevision)
+    || !isBytes32(value.contract_identity.identityHash))) return false;
+  if (value.provider_address !== null && !isAddress(value.provider_address)) return false;
+  if (value.source_revision !== null && !isSourceRevision(value.source_revision)) return false;
+  if (value.run_id !== null && typeof value.run_id !== "string") return false;
+  if (value.passport_url !== null && !isHttpUrl(value.passport_url)) return false;
+  if (!["Verified", "NeedsAttention", "NotRehearsable", null].includes(value.status as string | null)) return false;
+  const gates = value.gates;
+  if (gates !== null && (!isObject(gates)
+    || !["discoverable", "contract_correct", "fresh_challenge", "safe_to_rehearse", "paid_delivery"]
+      .every((gate) => typeof gates[gate] === "boolean"))) return false;
+  const explorerLinks = value.explorer_links;
+  if (typeof value.independent_verification !== "boolean" || !isObject(explorerLinks)) return false;
+  if (!["publicationTransaction", "inboundSettlement", "providerSettlement"]
+    .every((link) => explorerLinks[link] === null || typeof explorerLinks[link] === "string")) return false;
+  if (value.inbound_settlement !== null && !isPassportGateSettlement(value.inbound_settlement)) return false;
+  if (value.provider_settlement !== null && !isPassportGateSettlement(value.provider_settlement)) return false;
+  if (value.database_chain_match !== null && typeof value.database_chain_match !== "boolean") return false;
+  if (value.evidence_publication_transaction !== null && !isBytes32(value.evidence_publication_transaction)) return false;
+  if (![value.evidence_hash, value.manifest_hash, value.input_hash, value.result_hash]
+    .every((hash) => hash === null || isBytes32(hash))) return false;
+  if (value.rehearsal_action !== null && (!isObject(value.rehearsal_action)
+    || !["REHEARSE", "RENEW"].includes(String(value.rehearsal_action.kind))
+    || !isHttpUrl(value.rehearsal_action.url)
+    || value.rehearsal_action.requiresExplicitPaymentApproval !== true
+    || value.rehearsal_action.automaticallyExecuted !== false)) return false;
+  return true;
+}
+
+function isPassportGateSettlement(value: unknown): value is PassportGateSettlement {
+  return isObject(value)
+    && typeof value.paymentId === "string"
+    && value.network === XLAYER_TESTNET_NETWORK
+    && isAddress(value.asset)
+    && typeof value.amountAtomic === "string"
+    && /^\d+$/.test(value.amountAtomic)
+    && Number.isInteger(value.assetDecimals)
+    && isAddress(value.payer)
+    && isAddress(value.recipient)
+    && isBytes32(value.transactionHash)
+    && typeof value.blockTimestamp === "string";
+}
+
+function isControlledFixture(value: unknown): value is ControlledFixture {
+  return isObject(value)
+    && typeof value.variant === "string"
+    && value.label === "fixture"
+    && (value.launch_contract === null || isHttpUrl(value.launch_contract))
+    && (value.health === null || isHttpUrl(value.health))
+    && isHttpUrl(value.source)
+    && (value.declaration_address === null || isAddress(value.declaration_address))
+    && typeof value.intended_outcome === "string";
+}
+
+function isNullableFiniteNumber(value: unknown): value is number | null {
+  return value === null || (typeof value === "number" && Number.isFinite(value));
+}
+
+function isSourceRevision(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-fA-F]{40}$/.test(value);
 }
 
 function isAddress(value: unknown): value is `0x${string}` {

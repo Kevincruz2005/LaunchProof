@@ -44,6 +44,8 @@ const required = [
   "PUBLIC_API_BASE_URL",
   "PUBLIC_WEB_BASE_URL",
   "BUILD_COMMIT_SHA",
+  "RELEASE_IMAGE_TAG",
+  "RELEASE_IMAGE_DIGEST",
   "SOURCE_REPOSITORY",
   "OKX_API_KEY",
   "OKX_SECRET_KEY",
@@ -64,6 +66,7 @@ const required = [
   "FIXTURE_INVALID_OUTPUT_PROVIDER_PRIVATE_KEY",
   "FIXTURE_SCHEMA_DRIFT_PROVIDER_PRIVATE_KEY",
   "FIXTURE_TIMEOUT_PROVIDER_PRIVATE_KEY",
+  "FIXTURE_PROVIDER_KEY_SOURCE",
   "FIXTURE_PAYMENT_RECIPIENT",
   "FIXTURE_PAYMENT_AMOUNT_ATOMIC",
   "TARGET_ALLOWLIST",
@@ -107,6 +110,9 @@ if (!/^0x[0-9a-fA-F]{40}$/.test(values.REGISTRY_ADDRESS) || /^0x0{40}$/i.test(va
 if (!/^0x[0-9a-fA-F]{64}$/.test(values.REGISTRY_RUNTIME_CODE_HASH)) throw new Error("REGISTRY_RUNTIME_CODE_HASH is invalid");
 if (!/^[1-9][0-9]*$/.test(values.REGISTRY_DEPLOYMENT_BLOCK)) throw new Error("REGISTRY_DEPLOYMENT_BLOCK must be a positive block number");
 if (!/^[0-9a-f]{40}$/i.test(values.BUILD_COMMIT_SHA)) throw new Error("BUILD_COMMIT_SHA must be an immutable 40-character commit");
+if (values.RELEASE_IMAGE_TAG.toLowerCase() !== values.BUILD_COMMIT_SHA.toLowerCase()) throw new Error("RELEASE_IMAGE_TAG must equal BUILD_COMMIT_SHA");
+if (!/^sha256:[0-9a-f]{64}$/i.test(values.RELEASE_IMAGE_DIGEST)) throw new Error("RELEASE_IMAGE_DIGEST must be an immutable sha256 digest");
+if (values.FIXTURE_PROVIDER_KEY_SOURCE !== "external-secret") throw new Error("Production fixtures require FIXTURE_PROVIDER_KEY_SOURCE=external-secret");
 if (/your-org|\.example(?:\/|$)/i.test(values.SOURCE_REPOSITORY)) throw new Error("SOURCE_REPOSITORY must be the real repository");
 if (values.NODE_ENV === "production" && (!values.PUBLIC_API_BASE_URL.startsWith("https://") || !values.PUBLIC_WEB_BASE_URL.startsWith("https://"))) {
   throw new Error("Production public URLs must use HTTPS");

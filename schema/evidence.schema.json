@@ -10,7 +10,7 @@
     "target": { "$ref": "#/$defs/public_endpoint" },
     "label": { "enum": ["fixture", "external"], "$comment": "Provenance only. Runtime/network state is expressed by execution_mode and payment status." },
     "network": { "type": "string", "pattern": "^eip155:[1-9][0-9]*$", "examples": ["eip155:1952"] },
-    "execution_mode": { "enum": ["local", "testnet", "mainnet"] },
+    "execution_mode": { "enum": ["local", "testnet"] },
     "generated_at": { "type": "string", "format": "date-time" },
     "manifest": { "type": "object", "$comment": "Must also validate against launch-contract.schema.json and the active chain policy." },
     "discovery": { "type": "object" },

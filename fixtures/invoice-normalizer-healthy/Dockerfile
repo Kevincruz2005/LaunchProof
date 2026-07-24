@@ -1,4 +1,6 @@
 FROM node:24-alpine AS build
+ARG BUILD_COMMIT_SHA
+LABEL org.opencontainers.image.revision=$BUILD_COMMIT_SHA
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./

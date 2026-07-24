@@ -15,6 +15,7 @@ import type { FieldComparison, InvocationEvidence, PaymentReference } from "../d
 import { safeRequest } from "../security/safe-fetch.js";
 import type { Repository, TargetPaymentAttempt } from "../db/store.js";
 import pLimit from "p-limit";
+import { AlwaysLeader, NotLeaderError, type LeaderGuard } from "../leadership/leader.js";
 
 function headerRecord(headers: HeadersInit | undefined): Record<string, string> {
   const result: Record<string, string> = {};
@@ -30,6 +31,7 @@ export class TargetPaymentService {
   constructor(
     private readonly config: Config,
     private readonly repository: Repository,
+    private readonly leadership: LeaderGuard = new AlwaysLeader(),
   ) {}
 
   async pay(manifest: LaunchContract, runId: string): Promise<{
@@ -37,6 +39,7 @@ export class TargetPaymentService {
     deliveryMatches: boolean;
     evidence: InvocationEvidence;
   }> {
+    await this.leadership.assertLeader("target-payment");
     return this.paymentLock(() => this.repository.withTargetPaymentLock(() => this.payExclusive(manifest, runId)));
   }
 
@@ -98,6 +101,7 @@ export class TargetPaymentService {
       const normalized = await normalizeTargetPaymentRequest(input, init);
       const { url, body, headers } = normalized;
       if (headers.has("payment-signature")) {
+        await this.leadership.assertLeader("target-payment");
         const rpcChainId = await publicClient.getChainId();
         if (rpcChainId !== 1952 || rpcChainId !== this.config.chain.id) {
           throw new Error(`Target payment refused: RPC returned chain ${rpcChainId}, expected 1952`);
@@ -108,6 +112,7 @@ export class TargetPaymentService {
         headers: headerRecord(headers),
         body,
         timeoutMs: manifest.max_latency_ms,
+        signal: this.leadership.signal(),
       });
       return new Response(result.text, { status: result.status, headers: result.headers });
     };
@@ -116,6 +121,7 @@ export class TargetPaymentService {
       .registerPolicy(signedTermsOnly)
       .onAfterPaymentCreation(async ({ paymentPayload }) => {
         const authorization = readEip3009Authorization(paymentPayload);
+        await this.leadership.assertLeader("target-payment");
         if (
           paymentPayload.accepted.network !== this.config.chain.network ||
           paymentPayload.accepted.asset.toLowerCase() !== this.config.chain.usdt0Address.toLowerCase() ||
@@ -152,6 +158,7 @@ export class TargetPaymentService {
     const receiptHeader = response.headers.get("payment-response");
     if (!receiptHeader) throw new Error("Paid target omitted PAYMENT-RESPONSE receipt");
     const receipt = decodePaymentResponseHeader(receiptHeader);
+    await this.leadership.assertLeader("target-payment");
     if (!receipt.success || (receipt.status && receipt.status !== "success")) throw new Error("Target x402 settlement is not final");
     if (receipt.network !== this.config.chain.network) throw new Error("Target receipt used the wrong network");
     // The OKX exact facilitator may return a final receipt with an optional
@@ -340,7 +347,12 @@ const authorizationUsedEvent = [{
 }] as const;
 
 /** Recover an x402 settlement from the persisted signed EIP-3009 nonce without ever signing a replacement. */
-export async function reconcilePendingTargetPayments(config: Config, repository: Repository): Promise<number> {
+export async function reconcilePendingTargetPayments(
+  config: Config,
+  repository: Repository,
+  leadership: LeaderGuard = new AlwaysLeader(),
+): Promise<number> {
+  await leadership.assertLeader("payment-recovery");
   if (!config.XLAYER_RPC_URL) return 0;
   const transports = [http(config.XLAYER_RPC_URL), ...(config.XLAYER_FALLBACK_RPC_URL ? [http(config.XLAYER_FALLBACK_RPC_URL)] : [])];
   const client = createPublicClient({
@@ -349,16 +361,21 @@ export async function reconcilePendingTargetPayments(config: Config, repository:
   });
   let reconciled = 0;
   for (const run of await repository.pendingTargetPaymentAttempts()) {
+    await leadership.assertLeader("payment-recovery");
     const attempt = run.target_payment_attempt;
     if (!attempt) continue;
     let transaction = attempt.transaction_hash;
     if (!transaction) {
       transaction = await findAuthorizationTransaction(client, attempt, config.chain.usdt0Address);
-      if (transaction) await repository.recordTargetPaymentTransaction(run.run_id, transaction);
+      if (transaction) {
+        await leadership.assertLeader("payment-recovery");
+        await repository.recordTargetPaymentTransaction(run.run_id, transaction);
+      }
     }
     if (!transaction) {
       const latest = await client.getBlock();
       if (latest.timestamp > BigInt(attempt.authorization_valid_before)) {
+        await leadership.assertLeader("payment-recovery");
         await repository.clearTargetPaymentAttempt(run.run_id);
       }
       continue;
@@ -373,9 +390,11 @@ export async function reconcilePendingTargetPayments(config: Config, repository:
         BigInt(attempt.amount_atomic),
         attempt.authorization_nonce,
       );
+      await leadership.assertLeader("payment-recovery");
       await repository.savePayment(paymentFromAttempt(attempt, transaction, settledAt, config), run.run_id);
       reconciled += 1;
-    } catch {
+    } catch (error) {
+      if (error instanceof NotLeaderError) throw error;
       // A pending receipt or temporarily indeterminate RPC result remains recoverable on the next restart.
     }
   }

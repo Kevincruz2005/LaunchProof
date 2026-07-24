@@ -18,6 +18,7 @@ import { passportStatus } from "../domain/gates.js";
 import { hashJcs, sha256, toJcs } from "../evidence/canonical.js";
 import {
   manifestSigningBody,
+  normalizeLaunchContractUrl,
   parseLaunchContract,
   safeUseClaimsValid,
   type LaunchContract,
@@ -37,6 +38,7 @@ import {
   sanitizeStructuredError,
   sanitizeToolOutput,
 } from "../evidence/sanitize.js";
+import { AlwaysLeader, type LeaderGuard } from "../leadership/leader.js";
 
 const limitations = [
   "LaunchProof is not a security certification.",
@@ -47,15 +49,6 @@ const limitations = [
 
 function createRunId(): string {
   return `0x${randomBytes(32).toString("hex")}`;
-}
-
-function manifestUrl(input: string): string {
-  const url = new URL(input);
-  if (url.username || url.password || url.search || url.hash) {
-    throw new Error("Launch Contract URL credentials, query strings, and fragments are forbidden");
-  }
-  if (url.pathname === "/" || url.pathname === "") url.pathname = "/.well-known/launch-contract.json";
-  return url.toString();
 }
 
 function dailyCapacity(config: Pick<Config, "GLOBAL_RUN_LIMIT_PER_DAY">) {
@@ -197,10 +190,11 @@ export class RehearsalService {
   constructor(
     private readonly config: Config,
     private readonly repository: Repository,
+    private readonly leadership: LeaderGuard = new AlwaysLeader(),
   ) {
     this.limiter = pLimit(config.MAX_CONCURRENT_RUNS);
-    this.registry = new RegistryService(config);
-    this.targetPayments = new TargetPaymentService(config, repository);
+    this.registry = new RegistryService(config, leadership);
+    this.targetPayments = new TargetPaymentService(config, repository, leadership);
   }
 
   async start(request: RehearsalRequest, waitForCompletion: boolean): Promise<StoredRun> {
@@ -220,7 +214,7 @@ export class RehearsalService {
     operation: "genesis" | "renewal" = "genesis",
     previousRunId: string | null = null,
   ): Promise<StoredRun> {
-    const target = manifestUrl(url);
+    const target = normalizeLaunchContractUrl(url);
     const existing = await this.repository.getByIdempotencyKey(idempotencyKey);
     if (existing) {
       this.assertIdempotencySemantics(existing, target, operation, previousRunId);
@@ -245,6 +239,7 @@ export class RehearsalService {
   }
 
   async runReserved(runId: string, request: RehearsalRequest, waitForCompletion: boolean): Promise<StoredRun> {
+    await this.leadership.assertLeader("run-execution");
     if (this.active.has(runId)) return (await this.repository.getRun(runId))!;
     this.active.add(runId);
     try {
@@ -265,6 +260,7 @@ export class RehearsalService {
   }
 
   async recoverPendingRuns(): Promise<number> {
+    await this.leadership.assertLeader("run-recovery");
     const runs = await this.repository.recoverableRuns();
     let recovered = 0;
     for (const run of runs) {
@@ -332,7 +328,7 @@ export class RehearsalService {
     let declarationState: "verified" | "not_provided" | "invalid" = "not_provided";
     try {
       await this.repository.updateState(runId, "fetching_contract");
-      const raw = await fetchJson<unknown>(manifestUrl(request.url), this.config);
+      const raw = await fetchJson<unknown>(normalizeLaunchContractUrl(request.url), this.config);
       manifest = parseLaunchContract(raw, this.config);
       if (Buffer.byteLength(toJcs(manifest)) > 24_576) {
         throw new Error("Launch Contract exceeds the bounded evidence profile");
@@ -346,7 +342,7 @@ export class RehearsalService {
         });
         declarationState = valid ? "verified" : "invalid";
       }
-      const sourceOrigin = new URL(manifestUrl(request.url)).hostname.toLowerCase();
+      const sourceOrigin = new URL(normalizeLaunchContractUrl(request.url)).hostname.toLowerCase();
       if (new URL(manifest.mcp_endpoint).hostname.toLowerCase() !== sourceOrigin) {
         throw new Error("Launch Contract and MCP endpoint must use the same consenting provider hostname");
       }
@@ -368,7 +364,7 @@ export class RehearsalService {
         const previous = await this.repository.getRun(request.previous_run_id);
         if (!previous || !("canonical_evidence" in previous)) throw new Error("Renewal previous_run_id was not found");
         if (
-          previous.canonical_evidence.target !== manifestUrl(request.url) ||
+          previous.canonical_evidence.target !== normalizeLaunchContractUrl(request.url) ||
           previous.provider_declaration.provider_address.toLowerCase() !== manifest.provider_address.toLowerCase() ||
           previous.canonical_evidence.manifest.service_name !== manifest.service_name ||
           previous.canonical_evidence.manifest.tool !== manifest.tool
@@ -564,7 +560,7 @@ export class RehearsalService {
       const evidence: CanonicalEvidence = {
         schema_version: "1.0",
         run_id: runId,
-        target: manifestUrl(request.url),
+        target: normalizeLaunchContractUrl(request.url),
         label: fixtureVariant && declarationState === "verified" ? "fixture" : "external",
         network: this.config.chain.network,
         execution_mode: request.payment.status === "settled" && this.config.chainReady ? "testnet" : "local",
@@ -692,7 +688,7 @@ export class RehearsalService {
       const provider = this.config.fixtureAddresses[variant as keyof Config["fixtureAddresses"]];
       if (!configuredUrl || !provider) continue;
       if (
-        manifestUrl(configuredUrl) === manifestUrl(requestUrl) &&
+        normalizeLaunchContractUrl(configuredUrl) === normalizeLaunchContractUrl(requestUrl) &&
         provider.toLowerCase() === manifest.provider_address.toLowerCase()
       ) return variant;
     }
@@ -721,7 +717,7 @@ export class RehearsalService {
     const evidence: CanonicalEvidence = {
       schema_version: "1.0",
       run_id: runId,
-      target: manifestUrl(request.url),
+      target: normalizeLaunchContractUrl(request.url),
       label: this.trustedFixtureVariant(request.url, manifest) && declarationState === "verified" ? "fixture" : "external",
       network: this.config.chain.network,
       execution_mode: request.payment.status === "settled" && this.config.chainReady ? "testnet" : "local",
@@ -827,7 +823,7 @@ function runRecordFromEvidence(input: {
 
 function pendingChain(config: Config, transactionHash: `0x${string}`): ChainReference {
   return {
-    registry_address: config.REGISTRY_ADDRESS ?? "0x0000000000000000000000000000000000000000",
+    registry_address: config.REGISTRY_ADDRESS!,
     evidence_transaction_hash: transactionHash,
     block_number: "0",
     explorer_url: `${config.chain.explorerUrl}/tx/${transactionHash}`,

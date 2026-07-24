@@ -105,3 +105,11 @@ model ChainCursor {
   block     String
   updatedAt DateTime @updatedAt
 }
+
+model WriterLeadership {
+  id         String   @id
+  epoch      BigInt
+  holderId   String
+  acquiredAt DateTime
+  updatedAt  DateTime @updatedAt
+}

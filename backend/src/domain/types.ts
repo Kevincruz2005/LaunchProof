@@ -82,7 +82,7 @@ export interface CanonicalEvidence {
   target: string;
   label: "fixture" | "external";
   network: string;
-  execution_mode: "local" | "testnet" | "mainnet";
+  execution_mode: "local" | "testnet";
   generated_at: string;
   manifest: LaunchContract;
   discovery: Record<string, unknown>;

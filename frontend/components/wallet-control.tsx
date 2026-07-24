@@ -78,6 +78,7 @@ export function WalletControl({ placement }: { placement: "header" | "home" }) {
           {busy ? "Opening wallet…" : "Connect wallet"}
         </button>
         {account ? <button className="nav-wallet-disconnect" disabled={busy} onClick={() => void disconnect()} type="button">Disconnect</button> : null}
+        {error ? <p className="nav-wallet-error" role="alert">{error}</p> : null}
       </div>
     );
   }

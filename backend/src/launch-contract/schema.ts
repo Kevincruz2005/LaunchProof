@@ -171,3 +171,13 @@ export function manifestSigningBody(manifest: LaunchContract): Omit<LaunchContra
   const { declaration_signature: _signature, ...body } = manifest;
   return body;
 }
+
+/** Normalize a provider origin or exact Launch Contract URL without adding ambiguous URL components. */
+export function normalizeLaunchContractUrl(input: string): string {
+  const url = new URL(input);
+  if (url.username || url.password || url.search || url.hash) {
+    throw new Error("Launch Contract URL credentials, query strings, and fragments are forbidden");
+  }
+  if (url.pathname === "/" || url.pathname === "") url.pathname = "/.well-known/launch-contract.json";
+  return url.toString();
+}

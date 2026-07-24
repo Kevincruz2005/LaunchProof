@@ -1,0 +1,40 @@
+{
+  "analyzers": {
+    "core": {
+      "enabled": true,
+      "rules": {
+        "adminusername-should-not-be-literal": { "level": "error" },
+        "artifacts-parameters": { "level": "error" },
+        "max-asserts": { "level": "error" },
+        "no-conflicting-metadata": { "level": "error" },
+        "no-hardcoded-env-urls": {
+          "level": "error",
+          "disallowedhosts": [
+            "management.core.windows.net",
+            "gallery.azure.com",
+            "management.core.windows.net",
+            "database.windows.net",
+            "core.windows.net",
+            "login.microsoftonline.com",
+            "graph.windows.net",
+            "trafficmanager.net",
+            "vault.azure.net",
+            "datalake.azure.net",
+            "azuredatalakestore.net",
+            "azuredatalakeanalytics.net"
+          ]
+        },
+        "no-unnecessary-dependson": { "level": "warning" },
+        "no-unused-existing-resources": { "level": "error" },
+        "no-unused-params": { "level": "error" },
+        "no-unused-vars": { "level": "error" },
+        "outputs-should-not-contain-secrets": { "level": "error" },
+        "secure-parameter-default": { "level": "error" },
+        "simplify-interpolation": { "level": "warning" },
+        "use-parent-property": { "level": "warning" },
+        "use-recent-api-versions": { "level": "error" },
+        "use-resource-id-functions": { "level": "error" }
+      }
+    }
+  }
+}

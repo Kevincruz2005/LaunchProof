@@ -1,7 +1,7 @@
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import { randomUUID } from "node:crypto";
 import { createPublicClient, decodeEventLog, fallback, http } from "viem";
-import { xLayer, xLayerTestnet } from "viem/chains";
+import { xLayerTestnet } from "viem/chains";
 import { OKXFacilitatorClient } from "@okxweb3/x402-core";
 import {
   decodePaymentResponseHeader,
@@ -24,6 +24,7 @@ import type { PaymentReference } from "../domain/types.js";
 import type { Repository, SettlementProgress } from "../db/store.js";
 import { hashJcs } from "../evidence/canonical.js";
 import { resolvePublic, validateTargetUrl } from "../security/network.js";
+import { AlwaysLeader, NotLeaderError, type LeaderGuard } from "../leadership/leader.js";
 
 const protectedPaths = new Set(["/api/rehearsals", "/api/renewals", "/mcp/rehearse", "/mcp/renew"]);
 
@@ -74,6 +75,7 @@ export function createPaymentMiddleware(
   repository: Repository,
   onSettled?: (request: SettledRequest) => Promise<void>,
   onReserve?: (request: Omit<ReservedRequest, "run_id">) => Promise<{ run_id: string }>,
+  leadership: LeaderGuard = new AlwaysLeader(),
 ): RequestHandler {
   if (!config.paymentReady || !config.PAYOUT_ADDRESS) {
     return (request: Request, response: Response, next: NextFunction) => {
@@ -126,6 +128,7 @@ export function createPaymentMiddleware(
       return { abort: true, reason: "Idempotency key is bound to a different target, operation, or renewal lineage" };
     }
     if (!context.paymentHeader) return;
+    await leadership.assertLeader("inbound-payment");
     if (existing) {
       if (existing.state === "settlement_claimed") {
         return { abort: true, reason: "A verified settlement for this run is already in progress" };
@@ -178,6 +181,7 @@ export function createPaymentMiddleware(
     cleanupAttempt(fingerprint, attempt);
   });
   server.onBeforeSettle(async (context) => {
+    await leadership.assertLeader("inbound-payment");
     const fingerprint = hashJcs(context.paymentPayload);
     const attempt = attempts.get(fingerprint);
     if (!attempt?.claimed) return { abort: true, reason: "capacity_claim_missing", message: "Settlement has no durable capacity claim" };
@@ -216,6 +220,7 @@ export function createPaymentMiddleware(
     cleanupAttempt(fingerprint, attempt);
   });
   server.onAfterSettle(async (context) => {
+    await leadership.assertLeader("inbound-payment");
     const fingerprint = hashJcs(context.paymentPayload);
     const attempt = attempts.get(fingerprint);
     if (!attempt?.claimed) throw new Error("Settled payment has no durable capacity claim");
@@ -269,11 +274,17 @@ export function createPaymentMiddleware(
   return paymentMiddlewareFromHTTPServer(httpServer) as RequestHandler;
 }
 
-export async function reconcilePendingLaunchPayments(config: Config, repository: Repository): Promise<number> {
+export async function reconcilePendingLaunchPayments(
+  config: Config,
+  repository: Repository,
+  leadership: LeaderGuard = new AlwaysLeader(),
+): Promise<number> {
+  await leadership.assertLeader("payment-recovery");
   if (!config.XLAYER_RPC_URL || !config.PAYOUT_ADDRESS) return 0;
   const client = settlementPublicClient(config);
   let reconciled = 0;
   for (const progress of await repository.pendingPaymentSettlements()) {
+    await leadership.assertLeader("payment-recovery");
     const settlement = progress.settlement;
     if (!settlement) continue;
     let receipt: Awaited<ReturnType<typeof client.getTransactionReceipt>>;
@@ -283,6 +294,7 @@ export async function reconcilePendingLaunchPayments(config: Config, repository:
       continue;
     }
     if (receipt.status === "reverted") {
+      await leadership.assertLeader("payment-recovery");
       await repository.resetPaymentAmbiguous(progress.run_id);
       reconciled += 1;
       continue;
@@ -306,9 +318,12 @@ export async function reconcilePendingLaunchPayments(config: Config, repository:
     } as SettleResponse;
     try {
       const payment = await settledPaymentReference(config, response, requirements, settlement.route);
+      await leadership.assertLeader("payment-recovery");
       await repository.authorizeRun(payment, progress.run_id, dailyCapacity(config));
       reconciled += 1;
     } catch (error) {
+      if (error instanceof NotLeaderError) throw error;
+      await leadership.assertLeader("payment-recovery");
       await repository.markPaymentAmbiguous(
         progress.run_id,
         error instanceof Error ? error.message : "Settlement reconciliation failed",
@@ -584,9 +599,12 @@ async function verifySettlementTransfer(
 }
 
 function settlementPublicClient(config: Config) {
+  if (!config.chain.testnet || config.chain.id !== 1952 || config.chain.network !== "eip155:1952") {
+    throw new Error("Settlement verification is restricted to X Layer testnet (eip155:1952)");
+  }
   const transports = [http(config.XLAYER_RPC_URL!), ...(config.XLAYER_FALLBACK_RPC_URL ? [http(config.XLAYER_FALLBACK_RPC_URL)] : [])];
   return createPublicClient({
-    chain: config.chain.testnet ? xLayerTestnet : xLayer,
+    chain: xLayerTestnet,
     transport: transports.length > 1 ? fallback(transports) : transports[0]!,
   });
 }

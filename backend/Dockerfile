@@ -9,6 +9,8 @@ COPY schema schema
 RUN pnpm --filter @launchproof/backend exec prisma generate && pnpm --filter @launchproof/backend build
 
 FROM node:24-alpine
+ARG BUILD_COMMIT_SHA
+LABEL org.opencontainers.image.revision=$BUILD_COMMIT_SHA
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /app/node_modules ./node_modules

@@ -13,6 +13,13 @@ import {
   rehearsalTargetSchemaFor,
 } from "../payments/inbound.js";
 import { RegistryService } from "../chain/registry.js";
+import { PassportGateValidationError } from "@launchproof/passport-gate";
+import {
+  passportGateRequestSchema,
+  passportGateMcpOutputShape,
+  passportGateTransportBody,
+  type PassportGateAdapter,
+} from "../passport-gate/service.js";
 
 type McpMode = "rehearse" | "renew" | "public";
 
@@ -23,10 +30,44 @@ export async function handleMcp(
   service: RehearsalService,
   repository: Repository,
   config: Config,
+  passportGate: PassportGateAdapter,
 ) {
   const body = aliasBody(request.body);
   const server = new McpServer({ name: "LaunchProof", version: "1.0.0" });
   if (mode === "public") {
+    server.registerTool(
+      "check_service_passport",
+      {
+        description: "Return an independently verified ALLOW, WARN, BLOCK, or REHEARSAL_REQUIRED decision for a signed Launch Contract without spending or starting a rehearsal.",
+        inputSchema: passportGateRequestSchema,
+        outputSchema: passportGateMcpOutputShape,
+      },
+      async (input) => {
+        try {
+          const result = await passportGate.check(input);
+          const body = passportGateTransportBody(result);
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(body) }],
+            structuredContent: body,
+            ...(result.operational_status === "UNAVAILABLE" ? { isError: true } : {}),
+          };
+        } catch (error) {
+          const validation = error instanceof PassportGateValidationError || error instanceof z.ZodError;
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                error: validation ? "invalid_request" : "internal_error",
+                reason_code: error instanceof PassportGateValidationError ? error.code : validation ? "INVALID_INPUT" : "INTERNAL_UNAVAILABLE",
+                retry_safe: !validation,
+                decision: null,
+              }),
+            }],
+            isError: true,
+          };
+        }
+      },
+    );
     server.registerTool(
       "get_service_passport",
       {

@@ -1,6 +1,6 @@
 import { createPublicClient, fallback, http, keccak256, zeroAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { xLayer, xLayerTestnet } from "viem/chains";
+import { xLayerTestnet } from "viem/chains";
 import { OKXFacilitatorClient } from "@okxweb3/x402-core";
 import type { Config } from "../config.js";
 import { MAX_EVIDENCE_BYTES } from "../config.js";
@@ -24,7 +24,10 @@ export async function validateProductionChain(config: Config): Promise<void> {
   ) return;
   const transports = [http(config.XLAYER_RPC_URL), ...(config.XLAYER_FALLBACK_RPC_URL ? [http(config.XLAYER_FALLBACK_RPC_URL)] : [])];
   const transport = transports.length > 1 ? fallback(transports) : transports[0]!;
-  const client = createPublicClient({ chain: config.chain.testnet ? xLayerTestnet : xLayer, transport });
+  if (!config.chain.testnet || config.chain.id !== 1952 || config.chain.network !== "eip155:1952") {
+    throw new Error("Production chain preflight is restricted to X Layer testnet (eip155:1952)");
+  }
+  const client = createPublicClient({ chain: xLayerTestnet, transport });
   const chainId = await client.getChainId();
   if (chainId !== config.chain.id) throw new Error(`X Layer RPC returned chain ${chainId}; expected ${config.chain.id}`);
   const registry = config.REGISTRY_ADDRESS as `0x${string}`;

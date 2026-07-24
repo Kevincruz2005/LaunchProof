@@ -75,7 +75,7 @@ const evidenceSchema = z.object({
   target: z.string().url().max(2_048),
   label: z.enum(["fixture", "external"]),
   network: z.string().regex(/^eip155:[1-9][0-9]*$/),
-  execution_mode: z.enum(["local", "testnet", "mainnet"]),
+  execution_mode: z.enum(["local", "testnet"]),
   generated_at: isoDate,
   manifest: z.unknown(),
   discovery: z.record(z.string(), z.unknown()),

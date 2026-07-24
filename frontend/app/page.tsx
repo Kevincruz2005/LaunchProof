@@ -7,7 +7,7 @@ export default function Home() {
   return (
     <main>
       <section className="home-hero">
-        <div className="hero-copy"><p className="eyebrow">Service rehearsal · configured X Layer network</p><h1>A listing is a promise.<br /><em>Rehearse it.</em></h1><p className="lede">LaunchProof runs the declared sample, a controlled invalid call, and three fresh challenges. It reports declaration verification, payment, and publication separately, and marks evidence published only after a real registry transaction succeeds.</p><div className="proof-strip"><span><strong>5</strong> explainable gates</span><span><strong>3</strong> fresh challenges</span><span><strong>1×</strong> no-retry execution</span></div></div>
+        <div className="hero-copy"><p className="eyebrow">PassportGate · X Layer Testnet</p><h1>Before an agent hires an ASP,<br /><em>ask for proof.</em></h1><p className="lede">LaunchProof returns ALLOW, WARN, BLOCK, or REHEARSAL REQUIRED from a real paid rehearsal and independently verified on-chain Service Passport—not a rating or simulated transaction.</p><div className="proof-strip"><span><strong>5</strong> explainable gates</span><span><strong>2</strong> settlement receipts</span><span><strong>1×</strong> on-chain Passport</span></div><div className="hero-action"><Link className="secondary" href="/judge">Open Judge Mode →</Link></div></div>
         <WalletControl placement="home" />
       </section>
       <RecentPassports />

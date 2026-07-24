@@ -19,7 +19,7 @@ describe("public and paid routes", () => {
     const card = await request(app).get("/.well-known/launchproof.json");
     expect(card.status).toBe(200);
     expect(card.body.tools).toEqual(["rehearse_launch_contract"]);
-    expect(card.body.public_tools).toEqual(["get_service_passport"]);
+    expect(card.body.public_tools).toEqual(["get_service_passport", "check_service_passport"]);
     expect(card.body.chain.network).toBe("eip155:1952");
     expect(card.body.payments.genesis_amount_atomic).toBe("10000");
   });
@@ -40,7 +40,7 @@ describe("public and paid routes", () => {
     expect(response.headers["access-control-expose-headers"]?.toLowerCase().split(",")).toContain("payment-required");
   });
 
-  it("permits the OKX x402 paid-retry preflight without trusting its response-only header", async () => {
+  it("permits x402 request headers but refuses the response-only expose header in preflight", async () => {
     const response = await request(app)
       .options("/api/rehearsals")
       .set("Origin", "http://localhost:3000")
@@ -48,7 +48,26 @@ describe("public and paid routes", () => {
       .set("Access-Control-Request-Headers", "content-type,idempotency-key,payment-signature,access-control-expose-headers");
     expect(response.status).toBe(204);
     const allowed = response.headers["access-control-allow-headers"]?.toLowerCase().split(",");
-    expect(allowed).toEqual(expect.arrayContaining(["payment-signature", "access-control-expose-headers"]));
+    expect(allowed).toContain("payment-signature");
+    expect(allowed).not.toContain("access-control-expose-headers");
+    expect(allowed).not.toContain("x-launchproof-local-run");
+  });
+
+  it("denies unknown browser origins and refuses a public unpaid-bypass header", async () => {
+    const denied = await request(app)
+      .options("/api/rehearsals")
+      .set("Origin", "https://attacker.invalid")
+      .set("Access-Control-Request-Method", "POST");
+    expect(denied.status).toBe(403);
+    expect(denied.headers["access-control-allow-origin"]).toBeUndefined();
+
+    const bypass = await request(app)
+      .post("/api/rehearsals")
+      .set("Origin", "http://localhost:3000")
+      .set("x-launchproof-local-run", "true")
+      .send({ url: "https://example.com", idempotency_key: "public-bypass-refusal" });
+    expect(bypass.status).toBe(402);
+    expect(bypass.body).not.toHaveProperty("canonical_evidence");
   });
 
   it("publishes the exact no-SLA disclaimer", async () => {
@@ -56,13 +75,16 @@ describe("public and paid routes", () => {
     expect(response.body.disclaimer).toContain("It is not an uptime guarantee or a service-level agreement");
   });
 
-  it("advertises only the free Passport tool on the public MCP endpoint", async () => {
+  it("advertises both free Passport tools on the public MCP endpoint", async () => {
     const response = await request(app)
       .post("/mcp/public")
       .set("Accept", "application/json, text/event-stream")
       .send({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
     expect(response.status).toBe(200);
-    expect(response.body.result.tools.map((tool: { name: string }) => tool.name)).toEqual(["get_service_passport"]);
+    expect(response.body.result.tools.map((tool: { name: string }) => tool.name).sort()).toEqual([
+      "check_service_passport",
+      "get_service_passport",
+    ]);
   });
 
   it("serves OpenAPI with the deployed API origin and all public REST workflows", async () => {

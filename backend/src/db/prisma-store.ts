@@ -153,6 +153,20 @@ export class PrismaRepository implements Repository {
     return rows.map((row) => row.record as unknown as RunRecord);
   }
 
+  async passportsForTarget(target: string, provider: string): Promise<RunRecord[]> {
+    const rows = await this.client.run.findMany({
+      where: {
+        target,
+        provider: { equals: provider, mode: "insensitive" },
+        passportStatus: { not: null },
+        record: { not: Prisma.JsonNull },
+      },
+      orderBy: { updatedAt: "desc" },
+      select: { record: true },
+    });
+    return rows.map((row) => row.record as unknown as RunRecord);
+  }
+
   async savePayment(payment: PaymentReference, runId: string): Promise<void> {
     const existing = await this.client.payment.findUnique({ where: { id: payment.payment_id } });
     if (existing && !samePersistedPayment(existing, payment, runId)) {

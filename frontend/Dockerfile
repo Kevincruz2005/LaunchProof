@@ -24,6 +24,8 @@ ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL \
 RUN pnpm --filter @launchproof/frontend build
 
 FROM node:24-alpine
+ARG BUILD_COMMIT_SHA
+LABEL org.opencontainers.image.revision=$BUILD_COMMIT_SHA
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /app/frontend/.next/standalone ./

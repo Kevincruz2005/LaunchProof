@@ -19,3 +19,8 @@ backend/prisma/*.db*
 *.tsbuildinfo
 .DS_Store
 .vercel
+
+# Azure Phase 6/7 local deployment inputs and command results.
+infra/azure/*.last.json
+infra/azure/parameters/*.parameters.json
+.secrets/

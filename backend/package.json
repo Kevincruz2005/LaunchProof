@@ -8,12 +8,14 @@
     "dev": "node --env-file=../.env node_modules/tsx/dist/cli.mjs watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node --env-file=../.env dist/index.js",
+    "acceptance:testnet": "tsx src/acceptance/cli.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy"
   },
   "dependencies": {
+    "@launchproof/passport-gate": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.17.4",
     "@okxweb3/x402-core": "0.1.0",
     "@okxweb3/x402-evm": "0.1.1",
@@ -35,6 +37,8 @@
     "@types/express": "^5.0.3",
     "@types/node": "^24.0.15",
     "@types/supertest": "^6.0.3",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
     "prisma": "^6.12.0",
     "supertest": "^7.1.4",
     "tsx": "^4.20.3",

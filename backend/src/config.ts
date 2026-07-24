@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isPublicAddress } from "./security/network.js";
 
 const bool = z.enum(["true", "false"]).default("false").transform((value) => value === "true");
 const testnetBool = z.enum(["true", "false"]).default("true").transform((value) => value === "true");
@@ -18,10 +19,17 @@ const optionalBytes32 = z
   .regex(/^0x[0-9a-fA-F]{64}$/)
   .optional()
   .or(z.literal("").transform(() => undefined));
+const optionalImageDigest = z
+  .string()
+  .regex(/^sha256:[0-9a-f]{64}$/i)
+  .optional()
+  .or(z.literal("").transform(() => undefined));
 const optionalPositiveInteger = z.preprocess(
   (value) => (value === "" || value === undefined ? undefined : value),
   z.coerce.number().int().positive().optional(),
 );
+const nonnegativeNumber = z.coerce.number().finite().nonnegative();
+const positiveNumber = z.coerce.number().finite().positive();
 const optionalNetwork = z
   .string()
   .regex(/^eip155:[1-9][0-9]*$/)
@@ -58,6 +66,8 @@ const EnvSchema = z.object({
   PUBLIC_API_BASE_URL: z.string().url().default("http://localhost:4000"),
   PUBLIC_WEB_BASE_URL: z.string().url().default("http://localhost:3000"),
   BUILD_COMMIT_SHA: z.string().min(1).default("development"),
+  RELEASE_IMAGE_TAG: z.string().optional().or(z.literal("").transform(() => undefined)),
+  RELEASE_IMAGE_DIGEST: optionalImageDigest,
   SOURCE_REPOSITORY: z.string().url().default("https://github.com/Kevincruz2005/LaunchProof"),
   OKX_AI_LISTING_URL: z.string().url().optional().or(z.literal("").transform(() => undefined)),
   DEMO_VIDEO_URL: optionalUrl,
@@ -81,6 +91,8 @@ const EnvSchema = z.object({
   OKX_BASE_URL: okxBaseUrl,
   X402_ENABLED: bool,
   DATABASE_URL: z.string().optional(),
+  LEADERSHIP_DATABASE_URL: z.string().optional(),
+  LEADERSHIP_DATABASE_MODE: z.enum(["session"]).optional(),
   TARGET_PAYMENT_MAX_USDT0: z.coerce.number().positive().max(10).default(0.1),
   TARGET_PAYMENT_DAILY_LIMIT_USDT0: z.coerce.number().positive().max(100).default(1),
   TARGET_ALLOWLIST: z.string().default(""),
@@ -100,12 +112,17 @@ const EnvSchema = z.object({
   ALLOW_LOCAL_UNPAID_RUNS: bool,
   ALLOW_PRIVATE_TARGETS: bool,
   PUBLIC_ALLOWED_ORIGINS: z.string().default(""),
+  PASSPORT_GATE_WARN_AGE_HOURS: nonnegativeNumber.default(24),
+  PASSPORT_GATE_MAX_AGE_HOURS: positiveNumber.default(168),
 });
 
 export type Config = ReturnType<typeof loadConfig>;
 
 export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
   const parsed = EnvSchema.parse(source);
+  if (parsed.PASSPORT_GATE_MAX_AGE_HOURS <= parsed.PASSPORT_GATE_WARN_AGE_HOURS) {
+    throw new Error("PASSPORT_GATE_MAX_AGE_HOURS must be greater than PASSPORT_GATE_WARN_AGE_HOURS");
+  }
   if (!parsed.XLAYER_TESTNET) {
     throw new Error("X Layer mainnet is unsupported; LaunchProof must run on X Layer Testnet");
   }
@@ -201,9 +218,13 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
       parsed.TARGET_PAYER_PRIVATE_KEY &&
       parsed.PAYOUT_ADDRESS &&
       parsed.DATABASE_URL &&
+      parsed.LEADERSHIP_DATABASE_URL &&
+      parsed.LEADERSHIP_DATABASE_MODE === "session" &&
       parsed.OKX_API_KEY &&
       parsed.OKX_SECRET_KEY &&
       parsed.OKX_PASSPHRASE &&
+      parsed.RELEASE_IMAGE_TAG &&
+      parsed.RELEASE_IMAGE_DIGEST &&
       Object.values(fixtureUrls).every(Boolean) &&
       parsed.FIXTURE_HEALTHY_PROVIDER_ADDRESS &&
       parsed.FIXTURE_INVALID_OUTPUT_PROVIDER_ADDRESS &&
@@ -212,7 +233,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
   );
   if (parsed.NODE_ENV === "production" && !productionReady) {
     throw new Error(
-      "Production startup refused: x402 facilitator, payout wallet, registry writer, RPC, registry, database, and four explicit fixture URLs/identities are required",
+      "Production startup refused: x402 facilitator, payout wallet, registry writer, RPC, registry, database, immutable image identity, and four explicit fixture URLs/identities are required",
     );
   }
   if (productionReady) {
@@ -249,12 +270,61 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
     throw new Error("BUILD_COMMIT_SHA must be the immutable 40-character commit used for this chain-published build");
   }
   if (parsed.NODE_ENV === "production") {
+    requireExplicitProductionConfig(source, [
+      "PUBLIC_API_BASE_URL",
+      "PUBLIC_WEB_BASE_URL",
+      "BUILD_COMMIT_SHA",
+      "RELEASE_IMAGE_TAG",
+      "RELEASE_IMAGE_DIGEST",
+      "SOURCE_REPOSITORY",
+      "XLAYER_TESTNET",
+      "XLAYER_CHAIN_ID",
+      "XLAYER_NETWORK",
+      "XLAYER_USDT0_ADDRESS",
+      "XLAYER_EXPLORER_URL",
+      "XLAYER_RPC_URL",
+      "XLAYER_FALLBACK_RPC_URL",
+      "OKX_BASE_URL",
+      "X402_ENABLED",
+    ]);
     if (!/^[0-9a-f]{40}$/i.test(parsed.BUILD_COMMIT_SHA)) throw new Error("BUILD_COMMIT_SHA must be an immutable 40-character commit in production");
+    if (parsed.RELEASE_IMAGE_TAG?.toLowerCase() !== parsed.BUILD_COMMIT_SHA.toLowerCase()) {
+      throw new Error("RELEASE_IMAGE_TAG must equal the full BUILD_COMMIT_SHA in production");
+    }
     if (!/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/i.test(parsed.SOURCE_REPOSITORY)) {
       throw new Error("SOURCE_REPOSITORY must be a real public GitHub repository in production");
     }
-    if (!parsed.PUBLIC_API_BASE_URL.startsWith("https://") || !parsed.PUBLIC_WEB_BASE_URL.startsWith("https://")) {
-      throw new Error("Production public URLs must use HTTPS");
+    assertProductionUrl("PUBLIC_API_BASE_URL", parsed.PUBLIC_API_BASE_URL, true);
+    assertProductionUrl("PUBLIC_WEB_BASE_URL", parsed.PUBLIC_WEB_BASE_URL, true);
+    for (const origin of parsed.PUBLIC_ALLOWED_ORIGINS.split(",").map((value) => value.trim()).filter(Boolean)) {
+      assertProductionUrl("PUBLIC_ALLOWED_ORIGINS", origin, true);
+    }
+    assertProductionUrl("XLAYER_RPC_URL", parsed.XLAYER_RPC_URL!, false);
+    assertProductionUrl("XLAYER_FALLBACK_RPC_URL", parsed.XLAYER_FALLBACK_RPC_URL!, false);
+    assertProductionUrl("XLAYER_EXPLORER_URL", parsed.XLAYER_EXPLORER_URL!, false);
+    for (const [variant, fixtureUrl] of Object.entries(fixtureUrls)) {
+      assertProductionUrl(`FIXTURE_${variant.toUpperCase().replaceAll("-", "_")}_URL`, fixtureUrl!, true);
+    }
+    assertProductionDatabaseUrl(parsed.DATABASE_URL!);
+    assertProductionDatabaseUrl(parsed.LEADERSHIP_DATABASE_URL!);
+    assertProductionCredential("OKX_API_KEY", parsed.OKX_API_KEY!, 12);
+    assertProductionCredential("OKX_SECRET_KEY", parsed.OKX_SECRET_KEY!, 24);
+    assertProductionCredential("OKX_PASSPHRASE", parsed.OKX_PASSPHRASE!, 8);
+    if (isWeakPrivateKey(parsed.REGISTRY_WRITER_PRIVATE_KEY!) || isWeakPrivateKey(parsed.TARGET_PAYER_PRIVATE_KEY!)) {
+      throw new Error("Production private keys must not use zero, repeated-byte, or generated development identities");
+    }
+    if (parsed.REGISTRY_WRITER_PRIVATE_KEY!.toLowerCase() === parsed.TARGET_PAYER_PRIVATE_KEY!.toLowerCase()) {
+      throw new Error("Registry writer and target payer must use separate production identities");
+    }
+    const publicRoleAddresses = [parsed.REGISTRY_ADDRESS!, parsed.PAYOUT_ADDRESS!, ...Object.values(fixtureAddresses) as string[]]
+      .map((address) => address.toLowerCase());
+    if (new Set(publicRoleAddresses).size !== publicRoleAddresses.length) {
+      throw new Error("Registry, payout, and controlled fixture declaration addresses must be distinct in production");
+    }
+    for (const host of targetAllowlist) {
+      if (host.includes("://") || host.includes("/") || host.includes(":") || isUnsafeProductionHostname(host)) {
+        throw new Error("TARGET_ALLOWLIST must contain only public, non-placeholder hostnames in production");
+      }
     }
     if (parsed.PAYOUT_ADDRESS === "0x0000000000000000000000000000000000000000" || parsed.REGISTRY_ADDRESS === "0x0000000000000000000000000000000000000000") {
       throw new Error("Production payout and registry addresses must be nonzero");
@@ -289,7 +359,11 @@ function normalizeOrigin(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
   try {
-    return new URL(trimmed).origin;
+    const url = new URL(trimmed);
+    if (url.username || url.password || url.search || url.hash || (url.pathname !== "/" && url.pathname !== "")) {
+      throw new Error("origin contains credentials, path, query, or fragment");
+    }
+    return url.origin;
   } catch {
     throw new Error(`Invalid origin in PUBLIC_ALLOWED_ORIGINS: ${trimmed}`);
   }
@@ -298,4 +372,70 @@ function normalizeOrigin(value: string): string | null {
 function isLoopbackUrl(rawUrl: string): boolean {
   const hostname = new URL(rawUrl).hostname.replace(/^\[|\]$/g, "").toLowerCase();
   return hostname === "localhost" || hostname === "::1" || /^127(?:\.[0-9]{1,3}){3}$/.test(hostname);
+}
+
+function requireExplicitProductionConfig(source: NodeJS.ProcessEnv, names: readonly string[]): void {
+  const missing = names.filter((name) => !source[name]?.trim());
+  if (missing.length > 0) {
+    throw new Error(`Production startup refused: explicit configuration is required for ${missing.join(", ")}`);
+  }
+}
+
+function assertProductionUrl(name: string, raw: string, originOnly: boolean): void {
+  const url = new URL(raw);
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    (originOnly && url.pathname !== "/" && url.pathname !== "") ||
+    isUnsafeProductionHostname(url.hostname)
+  ) {
+    throw new Error(`${name} must be a public, non-placeholder HTTPS ${originOnly ? "origin" : "URL"} in production`);
+  }
+}
+
+function assertProductionDatabaseUrl(raw: string): void {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error("DATABASE_URL must be a valid PostgreSQL URL in production");
+  }
+  if (!new Set(["postgres:", "postgresql:"]).has(url.protocol) || !url.username || !url.password || !url.pathname.slice(1) || isUnsafeProductionHostname(url.hostname)) {
+    throw new Error("DATABASE_URL must be a credentialed, public, non-placeholder PostgreSQL URL in production");
+  }
+  assertProductionCredential("DATABASE_URL password", url.password, 12);
+}
+
+function assertProductionCredential(name: string, value: string, minimumLength: number): void {
+  const normalized = value.trim().toLowerCase();
+  if (
+    value.trim().length < minimumLength ||
+    /^(?:test|dev|demo|example|sample|placeholder|changeme|password|secret|key|passphrase|launchproof)[-_0-9]*$/i.test(normalized) ||
+    /(?:placeholder|change[-_ ]?me|replace[-_ ]?me|your[-_ ])/i.test(normalized)
+  ) {
+    throw new Error(`${name} is missing or contains a development/placeholder credential`);
+  }
+}
+
+function isUnsafeProductionHostname(rawHostname: string): boolean {
+  const hostname = rawHostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
+  if (
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname.endsWith(".local") ||
+    hostname.endsWith(".internal") ||
+    hostname.endsWith(".example") ||
+    hostname.endsWith(".invalid") ||
+    hostname.endsWith(".test") ||
+    hostname.includes("placeholder")
+  ) return true;
+  return /^[0-9a-f:.]+$/i.test(hostname) && !isPublicAddress(hostname);
+}
+
+function isWeakPrivateKey(value: string): boolean {
+  const body = value.slice(2).toLowerCase();
+  return /^0+$/.test(body) || /^(..)(?:\1){31}$/.test(body);
 }

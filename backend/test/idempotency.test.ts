@@ -53,6 +53,38 @@ describe("atomic run reservation", () => {
     expect((await repository.getRun(second.run_id))?.state).toBe("payment_required");
   });
 
+  it("binds concurrent duplicate authorization to one immutable payment without double-charge state", async () => {
+    const repository = new MemoryRepository();
+    const config = loadConfig({ NODE_ENV: "test" });
+    const service = new RehearsalService(config, repository);
+    const run = await service.reserve("https://fixture.example", "duplicate-authorization-key");
+    const payment: PaymentReference = {
+      payment_id: `0x${"91".repeat(32)}`,
+      kind: "launchproof",
+      amount: "10000",
+      amount_atomic: "10000",
+      amount_display: "0.01",
+      asset_decimals: config.chain.usdt0Decimals,
+      asset: config.chain.usdt0Address,
+      network: config.chain.network,
+      payer: `0x${"12".repeat(20)}`,
+      recipient: `0x${"34".repeat(20)}`,
+      route: "/api/rehearsals",
+      settlement_transaction: null,
+      status: "local_only",
+      timestamp: "2026-07-20T00:00:00.000Z",
+    };
+
+    await Promise.all(Array.from({ length: 16 }, () => repository.authorizeRun(payment, run.run_id)));
+    const stored = await repository.getRun(run.run_id);
+    expect(stored && !('canonical_evidence' in stored) ? stored.payment : null).toEqual(payment);
+    expect(await repository.getPayment(payment.payment_id)).toEqual({ ...payment, run_id: run.run_id });
+
+    await expect(repository.authorizeRun({ ...payment, payment_id: `0x${"92".repeat(32)}` }, run.run_id))
+      .rejects.toThrow(/immutable/);
+    expect(await repository.getPayment(`0x${"92".repeat(32)}`)).toBeNull();
+  });
+
   it("claims capacity before settlement and releases an expired or aborted claim", async () => {
     const repository = new MemoryRepository();
     const service = new RehearsalService(loadConfig({ NODE_ENV: "test" }), repository);

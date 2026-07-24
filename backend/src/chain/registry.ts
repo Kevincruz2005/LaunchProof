@@ -11,6 +11,7 @@ import {
   verifyMessage,
   zeroAddress,
   zeroHash,
+  type Hex,
   type PublicClient,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -24,6 +25,7 @@ import { hashJcs, sha256, toJcs } from "../evidence/canonical.js";
 import { validateCanonicalEvidence } from "../evidence/validate.js";
 import { manifestSigningBody } from "../launch-contract/schema.js";
 import { registryAbi } from "./abi.js";
+import { AlwaysLeader, type LeaderGuard } from "../leadership/leader.js";
 
 const registryWriterLimit = pLimit(1);
 
@@ -37,6 +39,27 @@ export class PublicationOutcomeUnknownError extends Error {
     );
     this.name = "PublicationOutcomeUnknownError";
   }
+}
+
+export function runtimeBytecodeMatches(
+  code: string | undefined,
+  expectedHash: string | undefined,
+): boolean {
+  return Boolean(
+    code &&
+    code !== "0x" &&
+    expectedHash &&
+    /^0x[0-9a-f]*$/i.test(code) &&
+    /^0x[0-9a-f]{64}$/i.test(expectedHash) &&
+    keccak256(code as Hex).toLowerCase() === expectedHash.toLowerCase(),
+  );
+}
+
+export function assertRuntimeBytecode(
+  code: string | undefined,
+  expectedHash: string,
+): void {
+  if (!runtimeBytecodeMatches(code, expectedHash)) throw new Error("Registry runtime bytecode mismatch");
 }
 
 export interface EvidenceHashes {
@@ -86,14 +109,38 @@ interface LoadedChainRun {
   match: boolean;
 }
 
+export interface RegistryVerification {
+  chain_record_found: boolean;
+  evidence_hash_match: boolean;
+  canonical_jcs_match: boolean;
+  manifest_hash_match: boolean;
+  input_hash_match: boolean;
+  result_hash_match: boolean;
+  provider_signature_match: boolean;
+  gate_status_match: boolean;
+  storage_match: boolean;
+  link_fields_match: boolean;
+  evidence_semantics_match: boolean;
+  launch_payment_transfer_match: boolean;
+  target_payment_transfer_match: boolean | null;
+  registry_runtime_match: boolean;
+  cache_match: boolean | null;
+  match: boolean;
+  transaction_hash: `0x${string}` | null;
+  block_number: string | null;
+  anchored_at: string | null;
+  canonical_evidence: CanonicalEvidence | null;
+}
+
 export class RegistryService {
-  constructor(private readonly config: Config) {}
+  constructor(private readonly config: Config, private readonly leadership: LeaderGuard = new AlwaysLeader()) {}
 
   async publish(
     evidence: CanonicalEvidence,
     hashes: EvidenceHashes,
     onPrepared?: (transactionHash: `0x${string}`) => Promise<void>,
   ): Promise<ChainReference> {
+    if (evidence.execution_mode === "testnet") await this.leadership.assertLeader("registry-publication");
     return registryWriterLimit(() => this.publishExclusive(evidence, hashes, onPrepared));
   }
 
@@ -175,6 +222,7 @@ export class RegistryService {
     } catch (error) {
       throw new Error("Registry publication was not broadcast because its recovery candidate could not be persisted", { cause: error });
     }
+    await this.leadership.assertLeader("registry-publication");
     try {
       const rpcChainId = await publicClient.getChainId();
       if (rpcChainId !== 1952 || rpcChainId !== this.config.chain.id) {
@@ -213,10 +261,25 @@ export class RegistryService {
         client.getChainId(),
         client.getCode({ address: this.config.REGISTRY_ADDRESS as `0x${string}` }),
       ]);
-      return chainId === this.config.chain.id && Boolean(code && code !== "0x");
+      return chainId === this.config.chain.id && runtimeBytecodeMatches(code, this.config.REGISTRY_RUNTIME_CODE_HASH);
     } catch {
       return false;
     }
+  }
+
+  /** Prove the configured read-only verification boundary before an absence can be trusted. */
+  async assertVerificationAvailable(): Promise<void> {
+    if (!this.config.chainReady || !this.config.REGISTRY_ADDRESS || !this.config.XLAYER_RPC_URL || !this.config.REGISTRY_RUNTIME_CODE_HASH) {
+      throw new Error("Registry verification is not configured");
+    }
+    const client = this.client();
+    const [chainId, code] = await Promise.all([
+      client.getChainId(),
+      client.getCode({ address: this.config.REGISTRY_ADDRESS as `0x${string}` }),
+      client.getBlockNumber(),
+    ]);
+    if (chainId !== 1952 || chainId !== this.config.chain.id) throw new Error("Registry RPC chain identity mismatch");
+    assertRuntimeBytecode(code, this.config.REGISTRY_RUNTIME_CODE_HASH);
   }
 
   async readPublishedRun(runId: string, cache: RunRecord | null = null): Promise<RunRecord | null> {
@@ -228,17 +291,19 @@ export class RegistryService {
     }
   }
 
-  async verify(runId: string, cache: RunRecord | null) {
-    let loaded: LoadedChainRun | null;
+  async verify(runId: string, cache: RunRecord | null): Promise<RegistryVerification> {
     try {
-      loaded = await this.load(runId, this.client(), cache?.chain.evidence_transaction_hash);
+      return await this.verifyStrict(runId, cache);
     } catch {
       return emptyVerification(false);
     }
+  }
+
+  /** Read-only verifier that preserves transport failures for trust-gate adapters to report as unavailable. */
+  async verifyStrict(runId: string, cache: RunRecord | null): Promise<RegistryVerification> {
+    const loaded = await this.load(runId, this.client(), cache?.chain.evidence_transaction_hash, true);
     if (!loaded) return emptyVerification(false);
-    const cacheMatch = cache
-      ? cache.evidence_hash === loaded.args.evidenceHash && cache.canonical_evidence_jcs === loaded.canonical
-      : null;
+    const cacheMatch = cache ? cacheMatchesLoaded(cache, loaded) : null;
     return {
       chain_record_found: true,
       evidence_hash_match: loaded.evidenceHashMatch,
@@ -258,12 +323,14 @@ export class RegistryService {
       match: loaded.match,
       transaction_hash: loaded.transactionHash,
       block_number: loaded.blockNumber?.toString() ?? null,
+      anchored_at: new Date(Number(loaded.args.anchoredAt) * 1_000).toISOString(),
       canonical_evidence: loaded.evidence,
     };
   }
 
   async rebuildIndex(repository: Repository): Promise<number> {
     if (!this.config.chainReady || !this.config.REGISTRY_ADDRESS || !this.config.XLAYER_RPC_URL) return 0;
+    await this.leadership.assertLeader("chain-index");
     const client = this.client();
     const cursorKey = `${this.config.chain.network}:${this.config.REGISTRY_ADDRESS.toLowerCase()}`;
     const [latestBlock, cursor] = await Promise.all([
@@ -283,6 +350,7 @@ export class RegistryService {
     });
     let indexed = 0;
     for (const log of logs) {
+      await this.leadership.assertLeader("chain-index");
       const decoded = decodeEventLog({ abi: registryAbi, data: log.data, topics: log.topics, strict: true });
       const runId = (decoded.args as unknown as PublishedArgs).runId;
       const loaded = await this.load(runId, client);
@@ -301,12 +369,14 @@ export class RegistryService {
       const record = existing
         ? { ...loaded.record, idempotency_key: existing.idempotency_key }
         : loaded.record;
+      await this.leadership.assertLeader("chain-index");
       if (!existing) await repository.createProgress(progressFromRecord(record));
       await repository.savePayment(record.payment, runId);
       if (record.target_payment) await repository.savePayment(record.target_payment, runId);
       await repository.saveRun(record);
       indexed += 1;
     }
+    await this.leadership.assertLeader("chain-index");
     await repository.saveChainCursor(cursorKey, latestBlock);
     return indexed;
   }
@@ -314,9 +384,11 @@ export class RegistryService {
   /** Reconciles only persisted exact candidates; unknown or pending outcomes remain explicitly pending. */
   async reconcilePendingPublications(repository: Repository): Promise<number> {
     if (!this.config.chainReady || !this.config.REGISTRY_ADDRESS || !this.config.XLAYER_RPC_URL) return 0;
+    await this.leadership.assertLeader("publication-recovery");
     const client = this.client();
     let finalized = 0;
     for (const progress of await repository.pendingPublications()) {
+      await this.leadership.assertLeader("publication-recovery");
       const publication = progress.publication;
       if (!publication?.candidate || !/^0x[0-9a-fA-F]{64}$/.test(publication.transaction_hash)) continue;
       const candidate = publication.candidate;
@@ -326,6 +398,7 @@ export class RegistryService {
         loaded.args.evidenceHash.toLowerCase() === publication.evidence_hash.toLowerCase() &&
         loaded.canonical === candidate.canonical_evidence_jcs
       ) {
+        await this.leadership.assertLeader("publication-recovery");
         await finalizeReconciledRun(repository, {
           ...loaded.record,
           idempotency_key: candidate.idempotency_key,
@@ -351,6 +424,7 @@ export class RegistryService {
       };
       try {
         const chain = await this.publish(candidate.canonical_evidence, hashes, async (transactionHash) => {
+          await this.leadership.assertLeader("publication-recovery");
           const nextCandidate: RunRecord = {
             ...candidate,
             state: "publishing_on_chain",
@@ -363,6 +437,7 @@ export class RegistryService {
             candidate: nextCandidate,
           });
         });
+        await this.leadership.assertLeader("publication-recovery");
         await finalizeReconciledRun(repository, { ...candidate, state: "complete", chain });
         finalized += 1;
       } catch (error) {
@@ -380,7 +455,12 @@ export class RegistryService {
     return createPublicClient({ chain: this.activeChain(), transport: readTransport(this.config) });
   }
 
-  private async load(runId: string, client = this.client(), transactionHint?: string): Promise<LoadedChainRun | null> {
+  private async load(
+    runId: string,
+    client = this.client(),
+    transactionHint?: string,
+    preserveOperationalErrors = false,
+  ): Promise<LoadedChainRun | null> {
     if (!this.config.REGISTRY_ADDRESS || !this.config.XLAYER_RPC_URL || !/^0x[0-9a-fA-F]{64}$/.test(runId)) return null;
     const [stored, registryCode] = await Promise.all([
       client.readContract({
@@ -392,10 +472,7 @@ export class RegistryService {
       client.getCode({ address: this.config.REGISTRY_ADDRESS as `0x${string}` }),
     ]);
     if (Number(stored.anchoredAt) === 0) return null;
-    const registryRuntimeMatch = Boolean(
-      registryCode && registryCode !== "0x" && this.config.REGISTRY_RUNTIME_CODE_HASH &&
-      keccak256(registryCode).toLowerCase() === this.config.REGISTRY_RUNTIME_CODE_HASH.toLowerCase()
-    );
+    const registryRuntimeMatch = runtimeBytecodeMatches(registryCode, this.config.REGISTRY_RUNTIME_CODE_HASH);
     const logs = /^0x[0-9a-fA-F]{64}$/.test(transactionHint ?? "")
       ? await this.logsFromReceipt(client, transactionHint as `0x${string}`, runId as `0x${string}`)
       : await this.logsAtAnchoredTimestamp(client, runId as `0x${string}`, BigInt(stored.anchoredAt));
@@ -444,9 +521,10 @@ export class RegistryService {
       client,
       evidence.payments.launchproof,
       log.blockNumber,
+      preserveOperationalErrors,
     );
     const targetPaymentTransferMatch = evidence.payments.target
-      ? await paymentTransferMatches(client, evidence.payments.target, log.blockNumber)
+      ? await paymentTransferMatches(client, evidence.payments.target, log.blockNumber, preserveOperationalErrors)
       : null;
     const transfersMatch = launchPaymentTransferMatch && targetPaymentTransferMatch !== false;
     const match = canonicalJcsMatch && evidenceHashMatch && manifestHashMatch && inputHashMatch &&
@@ -641,6 +719,19 @@ function chainRecordMatchesEvent(stored: StoredChainRecord, args: PublishedArgs)
   );
 }
 
+function cacheMatchesLoaded(cache: RunRecord, loaded: LoadedChainRun): boolean {
+  return cache.run_id.toLowerCase() === loaded.args.runId.toLowerCase() &&
+    cache.canonical_evidence_jcs === loaded.canonical &&
+    cache.evidence_hash.toLowerCase() === loaded.args.evidenceHash.toLowerCase() &&
+    cache.manifest_hash.toLowerCase() === loaded.args.manifestHash.toLowerCase() &&
+    cache.input_hash.toLowerCase() === loaded.args.inputHash.toLowerCase() &&
+    cache.normalized_result_hash.toLowerCase() === loaded.args.normalizedResultHash.toLowerCase() &&
+    cache.source_version_sha.toLowerCase() === loaded.evidence.source_revision.toLowerCase() &&
+    cache.provider_declaration.provider_address.toLowerCase() === loaded.args.provider.toLowerCase() &&
+    cache.chain.published &&
+    cache.chain.evidence_transaction_hash.toLowerCase() === loaded.transactionHash.toLowerCase();
+}
+
 function recordFromChain(
   evidence: CanonicalEvidence,
   canonical: string,
@@ -723,6 +814,7 @@ function emptyVerification(found: boolean) {
     match: false,
     transaction_hash: null,
     block_number: null,
+    anchored_at: null,
     canonical_evidence: null,
   };
 }
@@ -741,6 +833,7 @@ async function paymentTransferMatches(
   client: PublicClient,
   payment: PaymentReference,
   publicationBlock: bigint | null,
+  preserveOperationalErrors = false,
 ): Promise<boolean> {
   if (
     payment.status !== "settled" ||
@@ -773,7 +866,13 @@ async function paymentTransferMatches(
     if (!transferMatches) return false;
     const block = await client.getBlock({ blockNumber: receipt.blockNumber });
     return new Date(Number(block.timestamp) * 1_000).toISOString() === payment.timestamp;
-  } catch {
+  } catch (error) {
+    if (preserveOperationalErrors && !isMissingTransactionReceipt(error)) throw error;
     return false;
   }
+}
+
+function isMissingTransactionReceipt(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.name === "TransactionReceiptNotFoundError" || /transaction receipt.*not found/i.test(error.message);
 }

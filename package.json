@@ -9,9 +9,10 @@
   },
   "scripts": {
     "build": "pnpm -r --if-present build",
+    "build:validation": "node scripts/run-validation-build.mjs",
     "dev": "pnpm --parallel --filter @launchproof/backend --filter @launchproof/frontend dev",
     "test": "pnpm -r --if-present test",
-    "typecheck": "pnpm --filter @launchproof/fixture-runtime build && pnpm -r --if-present typecheck",
+    "typecheck": "pnpm --filter @launchproof/passport-gate build && pnpm --filter @launchproof/fixture-runtime build && pnpm -r --if-present typecheck",
     "lint": "pnpm -r --if-present lint",
     "contract:build": "node scripts/compile-contract.mjs",
     "fixtures:build": "pnpm --filter @launchproof/fixture-runtime build && pnpm --filter './fixtures/invoice-normalizer-*' build",
@@ -20,7 +21,9 @@
     "registry:deploy-testnet": "node scripts/deploy-testnet-registry.mjs",
     "registry:record-testnet": "node scripts/record-testnet-deployment.mjs",
     "testnet:validate": "node scripts/validate-demo-env.mjs",
-    "check": "pnpm contract:build && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+    "security:check": "node scripts/security-scan.mjs --self-test && node scripts/security-scan.mjs",
+    "iac:validate": "infra/azure/scripts/validate.sh",
+    "check": "pnpm security:check && pnpm contract:build && pnpm lint && pnpm typecheck && pnpm test && pnpm build:validation"
   },
   "devDependencies": {
     "localtunnel": "2.0.2",
