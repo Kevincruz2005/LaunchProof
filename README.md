@@ -16,7 +16,7 @@ The official OKX documentation lists X Layer testnet and test USD₮0 support in
 
 ## Start here
 
-Read the [complete project and implementation guide](./docs/PROJECT_IMPLEMENTATION.md) for the architecture, trust model, payment/evidence design, recovery behavior, verification model, test results, and live deployment proof. Follow [setup.md](./setup.md) from a clean clone for the command-by-command operator runbook. The [demo speaking script](./docs/DEMO_SCRIPT.md) gives a concise presentation flow and the final verified testnet hashes.
+Read the [complete project and implementation guide](./docs/PROJECT_IMPLEMENTATION.md) for the architecture, trust model, payment/evidence design, recovery behavior, verification model, test results, and live deployment proof. The [hackathon package](./docs/HACKATHON_PACKAGE.md) includes the agent-facing PassportGate API/MCP guide, live X Layer testnet evidence, security notes, deployment rollback guide, and submission drafts. Follow [setup.md](./setup.md) from a clean clone for the command-by-command operator runbook. The [90-second demo script](./docs/DEMO_SCRIPT.md) uses the final verified testnet evidence without triggering a new payment.
 
 ```bash
 git clone https://github.com/Kevincruz2005/LaunchProof.git

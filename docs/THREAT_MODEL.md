@@ -1,70 +1,44 @@
-# Threat model
+# LaunchProof security and threat-model notes
 
-## In scope
+Last evidence review: 2026-07-24. This document describes implemented controls and their limits; it is not a claim of formal verification or a security audit.
 
-- SSRF through manifest, MCP, payment-resource, or redirect URLs.
-- DNS rebinding and IPv4-mapped IPv6 bypasses.
-- Oversized/slow responses and concurrency exhaustion.
-- Schema drift, wrong values, unsafe invalid-input behavior, and target timeouts.
-- Payment proof absence, malformed proof, replay, wrong network/asset/amount/recipient/resource, unconfirmed settlement, and unlinked delivery.
-- Provider-signature confusion and malleable ECDSA signatures.
-- Registry impostors, wrong chain, wrong deployment block, compromised writer configuration, and bytecode substitution.
-- Evidence/database mutation, duplicate run publication, payment-ID or settlement reuse, and raw payload leakage.
-- Caller-controlled fixture labels or renewal links crossing provider/service/tool identity.
-- Untrusted target strings reaching logs, SQL, shells, browsers, or HTML.
+## Assets and trust boundaries
 
-## Network and deployment controls
+The critical assets are the registry writer capability, target-payer budget, x402 authorization/replay state, provider declaration identities, canonical evidence, and the integrity of the X Layer testnet anchors. The browser holds only the user's wallet authority. PostgreSQL holds operational state and is explicitly not proof authority.
 
-- Public operation is testnet-only: `XLAYER_TESTNET=true`, `ALLOW_XLAYER_MAINNET=false`, chain ID `1952`, and network `eip155:1952`.
-- Backend, fixtures, schemas, x402 policy, browser, and project card share one typed runtime chain profile.
-- Startup validates both RPC identity and the configured official test USD₮0 code/decimals when payment is enabled.
-- Registry preflight proves deployment block boundaries, immutable writer, evidence-size constant, and Keccak runtime-code hash.
-- Deployment recording also matches CREATE input to locally built Foundry bytecode plus the expected writer constructor argument.
-- Registry writer, target payer, payout, deployer, and four fixture providers use separate fresh keys. No private key has a `NEXT_PUBLIC_` name.
+The system crosses four main boundaries: untrusted public Launch Contract URLs, paid provider MCP endpoints, the browser wallet/x402 challenge, and X Layer RPC/registry reads. Every public proof claim is rebuilt from registry/event/receipt/bytecode/signature material rather than trusted from a database row.
 
-## Fetch and execution controls
+## Implemented controls
 
-- Public targets require HTTPS; credentials and unusual ports are rejected.
-- Every connection resolves A/AAAA records, rejects non-global address ranges, pins a validated address while retaining hostname TLS validation, and revalidates at most three redirects.
-- Private/local targets and unpaid runs require explicit development flags; both flags are rejected for public/production operation.
-- Each response is capped at 1 MB, each call uses a deadline, canonical evidence is capped at 64 KiB, and target calls never retry automatically.
-- Requests carry no target credentials, cookies, developer authorization, files, browser state, or undeclared tool access.
-- Launch Contract strings, arrays, assertion rules, primitive values, source commits, and challenge schema are bounded and validated. Only `equals`, `gte`, and `lte` assertions are accepted; no manifest-controlled regular expression is executed.
-- Renewal lineage must retain the same target/provider/service/tool identity and change the intended source/manifest lineage.
+| Threat | Control |
+| --- | --- |
+| Wrong network or token | Configuration and browser policy accept only X Layer testnet `1952` / `eip155:1952` and official test USD₮0 with six decimals. Mainnet is rejected. |
+| Registry impostor or code substitution | Startup verifies chain ID, deployment block boundary, runtime-code hash, immutable writer, and evidence limit. Verifiers repeat registry/runtime checks. |
+| SSRF, DNS rebinding, redirect abuse | Public HTTPS-only inputs, DNS resolution and non-global-address rejection, address pinning with hostname TLS, restricted redirects, bounded responses/timeouts, and a narrow outbound-header allowlist. |
+| Provider declaration forgery | Launch Contract schema, JCS/SHA-256 manifest hash, EIP-191 provider signature recovery, configured provider identity, and same-origin/current-contract checks. A caller-provided `fixture` flag never establishes trust. |
+| Payment substitution or replay | Exact network/asset/amount/payer/recipient/resource checks, unique persistence bindings, capped target spending, one-shot delivery linkage, receipt success and timestamp verification, and no automatic retry when the chain outcome is ambiguous. |
+| Double writer/publication | One backend replica plus a PostgreSQL session advisory leadership lease and monotonic fence. The read-only mode lacks a lease factory and rejects every writer capability. |
+| Cache tampering | Registry storage/event agreement, canonical JCS/hash recomputation, receipt/runtime/provider-signature reconstruction, and explicit database/chain agreement. Cache disagreement blocks a decision. |
+| Oversized/secret-bearing evidence | Bounded parser and evidence limits; field reduction; redaction of secret-like names/values; caps on strings, arrays, objects, and nesting; no raw headers/cookies/bodies in public evidence. |
+| Unsafe UI/configuration | Public configuration is validated at build/runtime, CORS is exact-origin rather than wildcard, and frontend configuration contains no signing material. |
 
-## Payment controls
+## Decision failure safety
 
-- Discovery (`initialize`, `tools/list`) is separate from billable tool dispatch.
-- Browser policy checks exact scheme, CAIP-2 network, test USD₮0 asset, atomic amount, payout recipient, and route before authorizing.
-- Inbound settlement requires a successful facilitator response; a hash-shaped value alone is not settlement proof.
-- Target payment requires a verified provider declaration, exact active network/asset terms, an explicit hostname allowlist, one-shot delivery linkage, and per-run/daily payer caps.
-- Payment references use explicit `amount_atomic`, `amount_display`, and `asset_decimals`; legacy `amount` is only the atomic compatibility alias.
-- Settlement transaction hashes are unique in persistence and cannot be reassigned to another payment/run.
-- `Verified` requires all five gates, including `paid_delivery=pass`. Unpaid, `not_tested`, failed, or local-only delivery cannot become verified.
+PassportGate uses an explicit non-decision state for dependency failures. RPC timeout, rate limiting, index outage, contract-fetch outage, or internal verification outage returns `UNAVAILABLE` with `decision: null`; it cannot silently become `ALLOW`, `WARN`, `BLOCK`, or an automatic payment.
 
-## Evidence minimization and privacy
+A missing, stale, or identity-mismatched Passport returns `REHEARSAL_REQUIRED` with a non-executing link. The link says that explicit payment approval is required; PassportGate never initiates a rehearsal.
 
-- Raw response bodies and headers remain only in bounded parser memory and are not written to evidence or logs.
-- Stored output is reduced to fields declared by assertions or the challenge profile.
-- Server identity, structured errors, comparison values, and remediation text are bounded and sanitized.
-- Sensitive property names, bearer tokens, secret-like assignments, JWTs, and private-key-shaped values are redacted.
-- Object key counts, array lengths, string lengths, and nesting depth are capped before persistence/publication.
-- Canonical results are deterministic. No LLM participates in execution, gate calculation, status, payment, remediation, or hashed evidence.
+## Read-only deployment boundary
 
-Sanitization cannot make private customer data safe for a permanent public chain. LaunchProof accepts only synthetic/public sample inputs; operators must inspect manifests and evidence fields before publication.
+`BACKEND_MODE=read-only` rejects x402, registry/target private keys, facilitator credentials, leadership settings, and local/private execution bypasses. It constructs `ReadOnlyLeaderGuard` before a leadership-session factory can exist, skips recovery/indexer loops, omits payment middleware, exposes read-only verification routes, and rejects repository writes. The candidate database role is restricted to SELECT.
 
-## Registry and verification controls
+## Residual risks and exclusions
 
-- Run IDs are nonzero bytes32 values and write-once.
-- The registry recomputes SHA-256 evidence hash, validates provider signature, rejects `isFixture=true` without a verified declaration, enforces gate/status invariants, and records the actual writer/timestamp.
-- Trusted fixture state comes from exact configured URL plus provider identity, not a manifest boolean.
-- PostgreSQL is a rebuildable index/cache and cannot override storage/event verification.
-- Read paths use indexed `runId` events and configured deployment boundaries rather than trusting a frontend label or synthesized explorer link.
+- A valid Passport is point-in-time evidence, not future uptime, code, ownership, or security assurance.
+- The registry attests to data published by its configured writer; it does not execute or prove remote HTTP/MCP behaviour in consensus.
+- A compromised writer, provider key, facilitator, RPC, wallet, or cloud identity remains a material risk despite role separation and verification.
+- The project accepts only public/synthetic sample inputs. Sanitization lowers accidental disclosure risk but cannot make private customer data suitable for permanent public publication.
+- The controlled failure fixtures are demonstrations, not findings against third-party providers.
+- The system is X Layer testnet-only and test tokens have no monetary value.
 
-## Explicit exclusions
-
-LaunchProof does not accept private/authenticated targets, arbitrary browser automation, file uploads, writes, arbitrary code, target-initiated wallet signing, subscriptions, continuous monitoring, or security/vulnerability certification. It tests only caller-supplied consenting endpoints and controlled fixtures; it never crawls or ranks providers.
-
-## Claims boundary
-
-The registry proves that its immutable writer published specific canonical evidence at a specific X Layer testnet time. It does not prove HTTP execution happened in consensus and does not make LaunchProof a decentralized oracle. A Passport is point-in-time operational evidence, not a future guarantee, mainnet settlement, marketplace identity check, or OKX endorsement. Test tokens have no monetary value.
+For the complete live evidence and transaction receipts, see [LIVE_TESTNET_EVIDENCE.md](./LIVE_TESTNET_EVIDENCE.md). For operational rollback, see [AZURE_DEPLOYMENT_AND_ROLLBACK.md](./AZURE_DEPLOYMENT_AND_ROLLBACK.md).

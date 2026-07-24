@@ -1,8 +1,8 @@
 # LaunchProof — Complete Project and Implementation Guide
 
-Last reviewed: 2026-07-17
+Last reviewed: 2026-07-24
 
-This document explains what LaunchProof is, how every major part is implemented, what is genuinely on chain, how to reproduce and operate it on X Layer testnet, and the exact state of deployment readiness. The command-by-command operator runbook is [`setup.md`](../setup.md); this file is the architectural and implementation handoff. The ready-to-read presentation is [`DEMO_SCRIPT.md`](./DEMO_SCRIPT.md).
+This document explains what LaunchProof is, how every major part is implemented, what is genuinely on chain, how to reproduce and operate it on X Layer testnet, and the exact state of deployment readiness. The command-by-command operator runbook is [`setup.md`](../setup.md); this file is the architectural and implementation handoff. The evidence-backed hackathon handoff is [`HACKATHON_PACKAGE.md`](./HACKATHON_PACKAGE.md), and the 90-second presentation is [`DEMO_SCRIPT.md`](./DEMO_SCRIPT.md).
 
 ## 1. Executive summary
 
@@ -31,53 +31,46 @@ Chain ID `195` is not used. Configuration, backend startup, deployment, fixture 
 
 ## 2. Current readiness and deployment truth
 
-LaunchProof is live on X Layer testnet. The public web client is on Vercel, the persistent API and four fixture services are on Railway, durable state is in Supabase PostgreSQL, and the registry is deployed on X Layer testnet. The runtime release used for the final paid acceptance run is the real Git commit `5fa2c80b3b2370724616ae3d0abc50865a8281af`; that object exists in this repository and the API plus every fixture reported that exact full SHA.
+LaunchProof is live on X Layer testnet. The public web client remains on Vercel, while the active backend writer and four controlled fixtures run in the approved Azure candidate boundary. Durable operational state is in the isolated Phase 7 Supabase candidate project; PostgreSQL is not proof authority. The Railway API is retained with zero active deployments for rollback and is not the active writer. The live LaunchProof Supabase production project was not touched.
 
-### 2.1 Live services
+### 2.1 Active services and provenance
 
-| Service | Public URL |
+| Service | Recorded public origin / identity |
 |---|---|
 | Web application | `https://launchproof-xlayer-testnet.vercel.app` |
-| API | `https://launchproof-api-production.up.railway.app` |
-| Healthy paid fixture | `https://launchproof-fixture-healthy-production.up.railway.app` |
-| Invalid-output fixture | `https://launchproof-fixture-invalid-production.up.railway.app` |
-| Schema-drift fixture | `https://launchproof-fixture-schema-production.up.railway.app` |
-| Timeout fixture | `https://launchproof-fixture-timeout-production.up.railway.app` |
+| Active API/writer | `https://launchproof-backend.delightfultree-b2769bfb.centralindia.azurecontainerapps.io` |
+| Healthy fixture | `https://launchproof-fixture-healthy.delightfultree-b2769bfb.centralindia.azurecontainerapps.io` |
+| Accepted backend source | `e19d16820b99b9424bf9debedb3819910403999d` |
+| Accepted fixture source | `5534df450bc7db901501d629f6e575316bce5ce2` |
 
-The API health check reports x402 startup preflight ready, registry reachable, and database reachable. Production disables both local escape hatches. `X402_ENABLED=true`, the only supported network is `eip155:1952`, and the official test USD₮0 asset is used end to end.
+The backend and signed fixture artifacts intentionally have independent immutable provenance. Azure uses one healthy backend replica and one writer leadership holder. Health records writer mode, x402 preflight readiness, reachable registry/database, and an active leadership lease. The full fixture origins and image digests are recorded in [PROGRESS_PLAN.md](../PROGRESS_PLAN.md).
 
 ### 2.2 Real registry deployment
 
 | Fact | Observed value |
 |---|---|
 | Registry | `0x99313b45b234e06eba1fc8fe7bee101b7f2f2c37` |
-| Deployment transaction | `0x34e8745cfa66425967e113892109d9845f874f311b5999b1bd718368696754ee` |
 | Deployment block | `35805522` |
 | Runtime code hash | `0xe367ae4a310bf429601d9cc43d4191e7d2c9e90056d3183918ba7cc8ac872553` |
-| Deployer | `0xFfa92d000831E6E173c1757572862Cf43f2036a5` |
 | Immutable writer | `0x69d805Fe2c206fe0A5bd77C5e6191Ce74Fc17692` |
 
-The former registry `0x222c757aE27e84480588DECB57929AC8be0f4bC4` remains deprecated and is never used as a fallback.
+No registry was redeployed during the Azure cutover.
 
 ### 2.3 Final paid acceptance proof
 
-On 2026-07-17 the exact release above completed a real paid rehearsal:
+On 2026-07-24, the approved Phase 8 harness completed one real paid rehearsal:
 
 | Fact | Value |
 |---|---|
-| Run ID | `0xfc904b9b51ec8f9036abe8bcf0b67bd4ab655468b0c4c04415cdc91b24b175ef` |
-| Passport | `verified` |
+| Run ID | `0x08d2827ea8ff483cbfc872ef0023925776775c541d80ff09f0d3d175b8b41e51` |
+| Passport | `Verified`; all five gates passed |
 | Fresh challenges | `3/3` passed |
-| LaunchProof payment | `0x3e11981acb2fc233622c79f8e2009b175f5a26d18a611965b3c154efc5eda252` |
-| Target paid-delivery payment | `0x2f30444a8d5f9b24fa3b81cd189ab3d388a73e617e99df340eabeadd13f9d9a2` |
-| Evidence publication | `0x150e7d59ffa00c0d2888d60f830fb6d4aa852948953fb6463aa5173e2ff63d82` |
-| Publication block | `35817253` |
+| Inbound x402 payment | `0xe7a8f62b8787c33925b90625e0727440b47ff869ec8e1ddfef4508526af6cb0b` |
+| Provider paid-delivery payment | `0x4be372435e2267949e49faa6b29a9c7c9274872a911f5b4d93815b1140c3bd21` |
+| Evidence publication | `0x5e8a74cc38c08594b2849c6786841ea86e57a58531fc6fc499e4c9b22e16f86e` |
+| Publication block | `36424714` |
 
-Both payments transferred `10000` atomic units (`0.01` test USD₮0) on `eip155:1952`. All five gates passed. `/verify/:runId` returned `true` for the canonical JCS, every evidence hash, provider signature, gate/status mapping, storage/event linkage, evidence semantics, both ERC-20 transfers, registry runtime, cache equality, and the final aggregate `match`.
-
-The browser/demo payer is the user-controlled X Layer testnet account `0x995d174c8b0c4f70817eaa59adb8a3e20faf659c`. Its private key is neither required nor stored by LaunchProof. The automated release acceptance uses the separate backend testnet payer so the complete flow can be reproduced without accessing a user's wallet profile.
-
-No transaction/address/block/runtime value above is fabricated or inferred from a placeholder. Each came from the deployed service response, transaction receipt, committed broadcast record, or live RPC verification.
+Both payments transferred `10000` atomic units (`0.01` test USD₮0) on `eip155:1952`. `scripts/verify-run.sh`, `/verify/{runId}`, and PassportGate independently matched canonical JCS, evidence hashes, provider signature, gate/status mapping, storage/event linkage, both ERC-20 transfers, registry runtime, and database/chain agreement. See [LIVE_TESTNET_EVIDENCE.md](./LIVE_TESTNET_EVIDENCE.md) for reviewer links and explicit limits.
 
 ## 3. System architecture
 
@@ -301,7 +294,7 @@ The browser also performs direct RPC verification using the bundled ABI. `script
 
 Advisory transaction locks serialize inbound capacity/payment authorization and publication updates. Startup rebuilds the cache from verified chain logs with a 12-block overlap. PostgreSQL can accelerate or recover the service but cannot make a chain verification pass.
 
-The live deployment uses Supabase-hosted PostgreSQL through its production pooler. Railway runs Prisma migrations before starting the API. Supabase is the durable queue/cache and recovery store; it is not the evidence authority. Deleting the cache does not delete the registry events, and a database row alone cannot make `/verify` return `match=true`.
+The active Azure writer uses the isolated Phase 7 Supabase candidate with a candidate-only application login. Supabase is the durable queue/cache and recovery store; it is not the evidence authority. The live LaunchProof Supabase production project was not connected or modified. Deleting a cache does not delete registry events, and a database row alone cannot make `/verify` return `match=true`.
 
 ## 14. HTTP, MCP, and frontend surfaces
 
@@ -312,7 +305,8 @@ Important HTTP routes:
 | `POST /api/rehearsals` | Paid Genesis rehearsal |
 | `POST /api/renewals` | Paid renewal linked to a previous run |
 | `POST /mcp/rehearse`, `/mcp/renew` | Paid MCP equivalents |
-| `POST /mcp/public` | Free MCP discovery/read operations |
+| `POST /mcp/public` | Free MCP discovery/read operations, including `check_service_passport` |
+| `POST /api/v1/passport-gate/check` | Read-only agent trust decision; no spend or rehearsal |
 | `GET /runs`, `/runs/:runId` | Verified chain-derived Passports/progress |
 | `GET /verify/:runId` | Full independent chain verification |
 | `GET /receipts/:paymentId` | Payment/run linkage |
@@ -336,7 +330,7 @@ Each public fixture has its own HTTPS origin and private provider key. Its manif
 
 ## 16. Security controls
 
-- Testnet-only startup and deploy guards; mainnet opt-in remains disabled.
+- Testnet-only startup and deploy guards; mainnet is refused rather than available as an opt-in.
 - Exact official token and decimals; no arbitrary asset supplied by the browser/provider.
 - Separate deployer, writer, target payer, payout custody, and four provider identities.
 - Secrets only in ignored mode-`0600` files; deployer and payout keys segregated from application env.
@@ -414,8 +408,8 @@ A genuine verified run shows three real transaction references: the inbound Laun
 The deployed system is intentionally split by workload:
 
 - **Vercel** builds and hosts only the Next.js frontend. Browser variables are public API/RPC/registry anchors prefixed with `NEXT_PUBLIC_`; no wallet, facilitator, database, writer, or payer secret is present in the frontend build.
-- **Railway** runs one persistent Express/worker API container and four separate fixture containers. A persistent process is required for bounded background work, late receipt reconciliation, startup recovery, and single-replica payment serialization.
-- **Supabase** provides managed PostgreSQL. Railway receives the pooled production `DATABASE_URL`; Prisma migrations run before API startup.
+- **Azure Container Apps** runs one persistent Express/worker backend and four separate fixture containers in the approved candidate resource group. One writer replica is required for bounded background work, late receipt reconciliation, startup recovery, and payment serialization.
+- **Supabase** provides the isolated candidate PostgreSQL database for the Azure path. The live LaunchProof Supabase production project was not used by this cutover.
 - **X Layer testnet** is the evidence and payment network. The API refuses to start if RPC chain ID, registry bytecode/runtime hash, token profile, writer configuration, or production safety settings do not match.
 - **OKX x402** provides the official facilitator path. A 402 challenge is expected protocol behavior; the paid retry and final receipt are the success conditions.
 
@@ -427,17 +421,13 @@ vercel build --prod
 vercel deploy --prebuilt --prod
 ```
 
-Railway can likewise deploy from the repository root with each service's Dockerfile already selected in its service settings:
+Railway is retained only as a rollback target. Do not start it while Azure is writer-capable. The recorded recovery command is:
 
 ```bash
-railway up --service launchproof-api --environment production --detach
-railway up --service launchproof-fixture-healthy --environment production --detach
-railway up --service launchproof-fixture-invalid --environment production --detach
-railway up --service launchproof-fixture-schema --environment production --detach
-railway up --service launchproof-fixture-timeout --environment production --detach
+railway redeploy --service launchproof-api --environment production --yes
 ```
 
-The API `BUILD_COMMIT_SHA` and every fixture `SOURCE_REVISION` must be the exact output of `git rev-parse HEAD`, not a shortened or manually expanded hash. LaunchProof deliberately rejects a trusted fixture if those values differ. Secrets must be entered in the hosting dashboards/CLI secret stores and never copied into Vercel public variables or committed files.
+For a new deployment, the backend `BUILD_COMMIT_SHA` must equal the checked-out 40-character source commit and its immutable image tag. Fixtures retain their independently signed 40-character source revision and digest; their release identity must be verified rather than overwritten to match a later backend-only fix. Secrets must remain in approved secret stores and never be copied into Vercel public variables or committed files.
 
 ## 18. Local development mode
 
@@ -478,13 +468,13 @@ The following checks passed on the release code and live deployment:
 | `git diff --check` | passed |
 | pnpm frozen lockfile, offline | up to date with pnpm `10.13.1` |
 | Prisma client generation | passed |
-| Live API health | x402 preflight, registry, and Supabase PostgreSQL reachable |
-| Live service provenance | API and all four fixtures reported exact Git SHA `5fa2c80b3b2370724616ae3d0abc50865a8281af` |
-| Paid end-to-end rehearsal | `verified`; five gates passed; three fresh challenges passed |
+| Live API health | Azure writer preflight, registry, and isolated candidate Supabase reachable |
+| Live service provenance | Backend `e19d16820b99b9424bf9debedb3819910403999d`; signed fixtures `5534df450bc7db901501d629f6e575316bce5ce2` |
+| Paid end-to-end rehearsal | `Verified`; five gates passed; three fresh challenges passed |
 | Independent server verification | every individual flag and aggregate `match` returned `true` |
 | Live RPC identity | chain `1952`; official test USD₮0 and registry bytecode present |
 
-The live database path was exercised through Supabase, including Prisma migrations, durable payment/run writes, restart recovery, and chain-index reconciliation. The final verified run and its three transaction hashes are listed in section 2.3.
+The isolated candidate database path was exercised through Supabase, including Prisma migrations, durable payment/run writes, restart recovery, and chain-index reconciliation. The final verified run and its three transaction hashes are listed in section 2.3.
 
 ## 20. Operational checklist
 
@@ -512,7 +502,7 @@ Monitor ambiguous payments/publications rather than manually retrying them. Rota
 - A `202` from `/runs/:runId` means the durable run is still executing. X Layer/facilitator settlement and two-confirmation publication can take tens of seconds. Keep polling the same run; do not create a new idempotency key.
 - **Change wallet** may open an OKX account-selection/permission flow. **Disconnect** clears LaunchProof immediately, although permission revocation itself is wallet-dependent.
 - A clean browser session has no injected wallet in automated headless testing. That is correct: the public UI must show **Connect wallet**, while real signing remains a user-approved OKX Wallet action.
-- If API and fixture source revisions differ during a rolling deploy, the fixture is marked not rehearsable. Finish deploying the exact same full Git SHA to all services before paying for the acceptance run.
+- Backend and fixture artifacts may have independent immutable source revisions. Rehearsal verifies the signed fixture identity/revision and image provenance; do not rewrite a fixture declaration merely to match a later backend-only release.
 - A late-but-successful registry receipt is reconciled from the persisted signed candidate every 30 seconds. It does not require a second publication transaction.
 
 ## 21. Scope and limitations

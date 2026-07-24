@@ -1,89 +1,79 @@
-# Architecture
+# LaunchProof architecture
 
-LaunchProof has four independently deployable classes: frontend, backend/indexer, immutable registry, and four controlled fixture services. The frontend receives only `NEXT_PUBLIC_*` configuration and the backend project card; JSON schemas and the generated registry ABI are the versioned interface boundary.
+Last evidence review: 2026-07-24. LaunchProof is an X Layer **testnet-only** trust gate for agent-service providers (ASPs). Before an AI agent hires or pays an ASP, it can request a chain-backed decision: `ALLOW`, `WARN`, `BLOCK`, or `REHEARSAL_REQUIRED`.
 
-## Trust and data flow
+The decision is derived from a signed Launch Contract and an independently reconstructed Service Passport. It does not itself spend, sign, publish, or start a rehearsal.
 
-The supported public profile is X Layer testnet chain `1952`, CAIP-2 network `eip155:1952`, and the official six-decimal test USD₮0 contract configured through `XLAYER_USDT0_ADDRESS`. The browser authorizes a fixed test-token LaunchProof payment. Official OKX x402 middleware verifies and settles it before the worker executes. Discovery messages are not billable work.
-
-The worker fetches one caller-supplied Launch Contract, validates its active network/asset policy, performs a bounded MCP rehearsal, optionally settles one allowlisted target-delivery payment, sanitizes and canonicalizes retained evidence, then publishes through `LaunchProofRegistry`. PostgreSQL indexes the same result for fast reads; `/verify/{runId}` treats registry storage and the `RunPublished` log as authoritative.
-
-The registry writer cannot change or delete a record. It can append only a previously unused bytes32 run ID. Storage retains critical hashes and status; `RunPublished` retains the bounded canonical evidence bytes. Provider declarations are EIP-191 signatures over the SHA-256 RFC 8785 manifest hash and are verified again by the registry when present. The contract rejects `isFixture=true` unless that provider signature verifies.
-
-## Startup chain identity
-
-Chain publication is fail-closed. Startup verifies:
-
-- the configured RPC chain ID;
-- bytecode at `REGISTRY_ADDRESS` at and after `REGISTRY_DEPLOYMENT_BLOCK`, with none at the preceding block;
-- `keccak256` of live runtime code against `REGISTRY_RUNTIME_CODE_HASH`;
-- immutable `writer()` against the configured writer key;
-- `MAX_EVIDENCE_BYTES()` against `65536`;
-- distinct writer, target-payer, and payout roles;
-- configured USD₮0 code and six decimals when x402 is enabled;
-- facilitator support for exact settlement on the active CAIP-2 network.
-
-The deployment recording helper additionally matches the deployment transaction's CREATE input to the locally built Foundry creation bytecode plus the expected writer constructor argument. Public address, block, and bytecode hash values are observed rather than copied from documentation.
-
-## Run state machine
+## Deployed topology
 
 ```text
-payment_required -> settlement_claimed -> payment_settled -> queued -> fetching_contract
--> discovering -> fixed_sample -> invalid_input -> fresh_challenges
--> target_payment_or_not_tested -> canonicalizing
--> publishing_on_chain -> complete
+Browser / AI agent
+  |  PassportGate REST or public MCP (read-only)
+  v
+Vercel web app  --------------------->  Azure Container Apps backend (one writer)
+  |                                           |              |
+  |                                           |              +-- isolated candidate Supabase PostgreSQL
+  |                                           |                  (queue, cache, recovery; not proof authority)
+  |                                           v
+  |                                     signed HTTPS/MCP Launch Contract
+  |                                           |
+  |                              bounded paid rehearsal when explicitly approved
+  |                                           v
+  +------------------------------> X Layer testnet registry + ERC-20 receipts
+                                               |
+                                               v
+                                      independent verifier / PassportGate
 ```
 
-`settlement_claimed` is a short durable capacity lease created after x402 verification and before settlement. If the facilitator returns a transaction before final chain verification, the exact transaction/payer/amount/route candidate is persisted as `payment_ambiguous`; startup reconciles only that candidate. A confirmed revert returns to `payment_required`, a proven transfer advances to `payment_settled`, and a missing or pending transaction remains blocked to prevent double charging.
+The currently recorded production web alias is `https://launchproof-xlayer-testnet.vercel.app`. Its API base is the Azure backend at `https://launchproof-backend.delightfultree-b2769bfb.centralindia.azurecontainerapps.io`. The prior Railway API is retained with zero active deployments for rollback; it is not the active writer. The four controlled fixtures run in the same approved Azure candidate boundary.
 
-Infrastructure failures enter `failed`. When a validated manifest provides enough bounded context, the worker can publish normalized `not-rehearsable` evidence. Publication also persists the exact canonical candidate and transaction before receipt waiting; startup never replaces a pending/unknown transaction and retries only after a confirmed revert. Explicit developer bypasses produce local-only evidence; they are never a verified paid Passport.
+## Network and proof anchors
 
-## Identity and labels
+| Anchor | Verified value |
+| --- | --- |
+| Network | X Layer testnet, `eip155:1952` |
+| Test token | test USD₮0, six decimals, `0x9e29b3aada05bf2d2c827af80bd28dc0b9b4fb0c` |
+| Registry | `0x99313b45b234e06eba1fc8fe7bee101b7f2f2c37` |
+| Registry creation block | `35805522` |
+| Runtime code hash | `0xe367ae4a310bf429601d9cc43d4191e7d2c9e90056d3183918ba7cc8ac872553` |
+| Evidence capacity | 65,536 canonical bytes |
 
-- `fixture` requires an exact configured fixture URL and its matching configured provider signature address.
-- `external` is an independently supplied public provider.
-- `execution_mode` independently records `local`, `testnet`, or `mainnet`; `network` records the CAIP-2 value and payment records carry settlement state.
+The backend starts only after it verifies the chain identity, registry creation boundary, runtime bytecode hash, immutable registry writer, test-token bytecode/decimals, and configured public origins. Mainnet is refused by configuration; there is no mainnet fallback.
 
-The label records provenance only. Local execution is never encoded as a service identity label.
+## Rehearsal and evidence flow
 
-A manifest's caller-controlled `fixture` boolean cannot grant trusted fixture status.
+1. An ASP exposes a signed Launch Contract at a public HTTPS URL. It declares the provider identity, source revision, MCP endpoint, synthetic sample, controlled invalid input, fresh-challenge profile, safety scope, and any exact x402 delivery terms.
+2. A user explicitly approves the incoming x402 payment in an EVM wallet. The browser validates chain, asset, amount, recipient, and route before signing.
+3. The backend makes a bounded run: contract validation, tool discovery, fixed sample, controlled invalid input, exactly three fresh challenges, and—only where the contract requires it—one allowlisted provider-delivery payment from a separate capped test wallet.
+4. The worker keeps only bounded, declared evidence; canonicalizes it with JCS; computes hashes; and publishes the record once to the append-only registry.
+5. Readers reconstruct the Passport from registry storage, the `RunPublished` event, transaction receipts, runtime bytecode, provider signature, and canonical evidence. PostgreSQL may help locate/cache a run but cannot make it valid.
 
-## Gates and status
+The five evidence gates are `discoverable`, `contract_correct`, `fresh_challenge`, `safe_to_rehearse`, and `paid_delivery`. `Verified` requires all five to pass and both required testnet transfers to be independently proven.
 
-Two bits encode each gate: `not_tested`, `pass`, or `fail`; the fourth bit pattern is rejected. The five gates are `discoverable`, `contract_correct`, `fresh_challenge`, `safe_to_rehearse`, and `paid_delivery`.
+## PassportGate decision model
 
-`Verified` is valid only when all five gates pass. Tested failures or unpaid delivery produce `NeedsAttention`; incomplete core testing produces `NotRehearsable`. The Solidity contract enforces the same relationship as the backend.
+PassportGate is a read-only policy layer shared by REST, public MCP, and the Judge Mode UI.
 
-## Evidence and privacy
+| Result | Meaning |
+| --- | --- |
+| `ALLOW` | A matching Passport is `Verified`, all verification/settlement checks pass, and its chain timestamp is within the warning window. |
+| `WARN` | The same full proof passes, but the Passport is older than the warning window and not yet expired. |
+| `BLOCK` | A matching Passport exists but its status, gates, identity, signature, hashes, registry/readback, transfers, or database/chain agreement fails. |
+| `REHEARSAL_REQUIRED` | No valid matching Passport exists, the contract/source/provider identity changed, or the valid Passport is beyond the maximum age. The returned action is non-executing and requires explicit payment approval. |
+| `UNAVAILABLE` | An RPC/index/contract-fetch dependency cannot be verified. This is not a trust decision and never becomes `ALLOW` or `BLOCK`. |
 
-Before evidence reaches PostgreSQL or the immutable event:
+Freshness uses the anchored chain block timestamp, not application-server time. The default warning and maximum windows are 24 and 168 hours, configurable only within validated safety bounds.
 
-- tool output is reduced to declared assertion/challenge fields;
-- discovery identity is reduced to bounded public server fields;
-- sensitive key names, bearer values, tokens, JWTs, and secret-like error text are redacted;
-- strings, arrays, objects, keys, and nesting depth are capped;
-- structured errors are bounded and sanitized;
-- raw HTTP bodies, headers, cookies, credentials, and arbitrary undeclared output are not retained.
+## Single-writer safety and recovery
 
-This is defense in depth, not permission to submit secrets. Targets must use synthetic/public sample inputs only because canonical evidence is permanently public.
+The active backend uses a PostgreSQL session advisory lease with monotonically increasing fencing. A writer checks leadership before mutation/broadcast and persists immutable transaction candidates for recovery. During Phase 8, Railway was stopped before Azure became writer; final acceptance recorded one active Azure revision, one replica, and one leadership holder. A read-only backend mode exists for candidate deployments and cannot create a leadership session, initiate payments, or publish.
 
-## Hash material
+## On-chain versus off-chain
 
-1. JCS of retained fixed, invalid, and fresh inputs → `input_hash`.
-2. JCS of normalized field comparisons → `normalized_result_hash`.
-3. JCS of the complete manifest without `declaration_signature` → `manifest_hash`.
-4. JCS of retained canonical evidence → `evidence_hash`.
-5. JCS of the normalized LaunchProof payment reference → `paymentReceiptHash` in registry storage/event; the target reference remains covered by `evidence_hash`.
+On chain: the registry record/event, canonical evidence bytes and hashes, registry timestamp/writer, and the receipts for the two required test USD₮0 transfers and evidence-publication transaction.
 
-All evidence hashes use SHA-256. Runtime bytecode identity uses Keccak-256. Canonical evidence is capped at 65,536 bytes in both worker and contract.
+Off chain: HTTPS/MCP execution, contract fetches, bounded comparison work, operational queues/cache/recovery metadata, UI presentation, and external provider availability. The registry proves what the configured writer published at a testnet time; it does not place HTTP execution into consensus.
 
-## Testnet release order
+## Boundaries
 
-1. Commit the exact source; install the pinned toolchain and run application/contract tests.
-2. Build the registry with Foundry and deploy a fresh registry to chain `1952` using a fresh writer.
-3. Record and verify deployment transaction input, address, block, runtime hash, writer, and evidence limit.
-4. Deploy/sign four fixtures with distinct keys and four explicit HTTPS URLs from that same source commit.
-5. Apply PostgreSQL migrations and start the backend so startup preflight succeeds.
-6. Build the frontend with public-only testnet/API values.
-7. Verify free reads, inbound `402`, both settlements, five passing gates, registry readback, and browser reconstruction.
-8. Publish demo/listing references only after those exact public facts exist.
+LaunchProof is not an audit, certification, security guarantee, uptime monitor, marketplace identity check, future-behaviour guarantee, decentralized oracle, mainnet system, or OKX endorsement. It evaluates one declared, consenting service at a point in time using synthetic/public inputs. Test USD₮0 and test OKB have no monetary value.
