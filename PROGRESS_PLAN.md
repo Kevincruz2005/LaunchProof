@@ -1070,4 +1070,26 @@ No payment, wallet signature, testnet transaction, registry publication, writer 
 - [x] Immutable commit and all five image digests are recorded.
 - [x] Costs, deviations, commands, and results are documented without secrets.
 
-Phase 7 stops here. Azure writer activation, Railway shutdown, Vercel cutover, paid rehearsal, any transaction, branch push, and Phase 8 remain unapproved and were not performed.
+Phase 7 stopped here. Azure writer activation, Railway shutdown, Vercel cutover, paid rehearsal, any transaction, branch push, and Phase 8 were not performed during Phase 7. The separate Phase 8 authorization below supersedes only the earlier statement that those specifically listed Phase 8 actions were unapproved.
+
+## Phase 8 authorization record
+
+On 2026-07-24, before any Phase 8 action, the user explicitly approved:
+
+- Phase 8 writer cutover and real testnet acceptance;
+- temporarily stopping the Railway writer/backend;
+- activating exactly one Azure writer;
+- real test-token spend for one paid rehearsal on X Layer testnet chain `1952` only; and
+- updating Vercel's API base URL and the corresponding exact CORS allowlist only after the full acceptance gate passes.
+
+The following constraints remain explicit:
+
+- Railway resources must not be deleted and must remain available for rollback.
+- The live Supabase production project must not be connected to, linked, migrated, pushed to, or modified.
+- No mainnet payment, transaction, contract deployment, or configuration is authorized.
+- The approval covers one acceptance rehearsal only and does not authorize retries after an ambiguous payment outcome or any additional test-token spend.
+- Vercel routing and CORS must remain unchanged until Azure writer health, exclusive-writer state, payment policy, both required testnet transfer proofs, registry publication, read-only reconstruction, PassportGate result, and rollback readiness have all passed the Phase 8 acceptance procedure.
+- Exactly one writer may be capable of publication at any time: the Railway writer must be confirmed stopped before Azure writer activation, and rollback must stop/disable Azure before Railway is restarted.
+- Existing source-branch isolation, immutable-image verification, secret-handling, spend caps, chain/asset/recipient locks, and no-push boundaries remain in force unless a later explicit instruction changes them.
+
+This record is authorization, not evidence that Phase 8 has started or passed. At this checkpoint no Railway, Azure, Vercel, Supabase, registry, wallet, payment, transaction, or external routing state was changed.
