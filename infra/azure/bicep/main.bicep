@@ -29,6 +29,11 @@ param deployBackend bool = true
 @description('Immutable full Git commit for tags, image tags, and application provenance.')
 param buildCommit string
 
+@minLength(40)
+@maxLength(40)
+@description('Immutable full Git commit for the independently signed fixture artifacts and their image tags.')
+param fixtureBuildCommit string
+
 @description('Existing public GitHub source repository URL.')
 param sourceRepositoryUrl string
 
@@ -153,8 +158,9 @@ var writerSafety = readOnlyMode
   ? !writerCutoverApproved ? 'read-only-no-writer' : fail('Read-only mode requires writerCutoverApproved=false')
   : writerCutoverApproved && deployWorkloads && deployBackend ? 'active-cutover-approved' : fail('Active backend requires writerCutoverApproved=true, deployWorkloads=true, and deployBackend=true')
 var registrySafety = containerRegistryServer == '${containerRegistryName}.azurecr.io' ? 'existing-acr-validated' : fail('Container registry server/name mismatch')
-var imageTagAndDigest = ':${toLower(buildCommit)}@sha256:'
-var imageSafety = startsWith(toLower(backendImage), '${toLower(containerRegistryServer)}/') && contains(toLower(backendImage), imageTagAndDigest) && startsWith(toLower(healthyFixtureImage), '${toLower(containerRegistryServer)}/') && contains(toLower(healthyFixtureImage), imageTagAndDigest) && startsWith(toLower(invalidOutputFixtureImage), '${toLower(containerRegistryServer)}/') && contains(toLower(invalidOutputFixtureImage), imageTagAndDigest) && startsWith(toLower(schemaDriftFixtureImage), '${toLower(containerRegistryServer)}/') && contains(toLower(schemaDriftFixtureImage), imageTagAndDigest) && startsWith(toLower(timeoutFixtureImage), '${toLower(containerRegistryServer)}/') && contains(toLower(timeoutFixtureImage), imageTagAndDigest) ? 'commit-tags-and-digests-validated' : fail('Every image must use the approved existing ACR, the exact build commit tag, and an immutable sha256 digest')
+var backendImageTagAndDigest = ':${toLower(buildCommit)}@sha256:'
+var fixtureImageTagAndDigest = ':${toLower(fixtureBuildCommit)}@sha256:'
+var imageSafety = startsWith(toLower(backendImage), '${toLower(containerRegistryServer)}/') && contains(toLower(backendImage), backendImageTagAndDigest) && startsWith(toLower(healthyFixtureImage), '${toLower(containerRegistryServer)}/') && contains(toLower(healthyFixtureImage), fixtureImageTagAndDigest) && startsWith(toLower(invalidOutputFixtureImage), '${toLower(containerRegistryServer)}/') && contains(toLower(invalidOutputFixtureImage), fixtureImageTagAndDigest) && startsWith(toLower(schemaDriftFixtureImage), '${toLower(containerRegistryServer)}/') && contains(toLower(schemaDriftFixtureImage), fixtureImageTagAndDigest) && startsWith(toLower(timeoutFixtureImage), '${toLower(containerRegistryServer)}/') && contains(toLower(timeoutFixtureImage), fixtureImageTagAndDigest) ? 'independent-commit-tags-and-digests-validated' : fail('Backend and fixture images must use the approved existing ACR, their exact configured commit tags, and immutable sha256 digests')
 var zeroAddress = '0x0000000000000000000000000000000000000000'
 var productionRoleAddresses = map([registryAddress, payoutAddress, healthyProviderAddress, invalidOutputProviderAddress, schemaDriftProviderAddress, timeoutProviderAddress], address => toLower(address))
 var roleSafety = !contains(productionRoleAddresses, zeroAddress) && length(union(productionRoleAddresses, [])) == length(productionRoleAddresses) ? 'distinct-roles-validated' : fail('Registry, payout, and controlled fixture declaration addresses must be nonzero and distinct')
@@ -167,6 +173,7 @@ var tags = {
   project: 'launchproof'
   environment: activationMode
   commit: buildCommit
+  fixtureCommit: fixtureBuildCommit
   managedBy: 'bicep'
   phase: 'phase-7-read-only-candidate'
   backendSafety: backendSafety
@@ -409,8 +416,8 @@ var backendSecrets = readOnlyMode ? backendReadOnlySecrets : backendWriterSecret
 var fixtureBaseEnv = [
   { name: 'NODE_ENV', value: 'production' }
   { name: 'FIXTURE_BIND_HOST', value: '0.0.0.0' }
-  { name: 'SOURCE_REVISION', value: buildCommit }
-  { name: 'RELEASE_IMAGE_TAG', value: buildCommit }
+  { name: 'SOURCE_REVISION', value: fixtureBuildCommit }
+  { name: 'RELEASE_IMAGE_TAG', value: fixtureBuildCommit }
   { name: 'FIXTURE_PROVIDER_KEY_SOURCE', value: 'external-secret' }
   { name: 'XLAYER_TESTNET', value: 'true' }
   { name: 'XLAYER_CHAIN_ID', value: '1952' }
@@ -422,7 +429,7 @@ var fixtureBaseEnv = [
 ]
 
 module healthyFixture 'modules/container-app.bicep' = if (deployWorkloads) {
-  name: 'fixture-healthy-${take(buildCommit, 10)}'
+  name: 'fixture-healthy-${take(fixtureBuildCommit, 10)}'
   params: {
     name: healthyName
     location: location
@@ -431,7 +438,7 @@ module healthyFixture 'modules/container-app.bicep' = if (deployWorkloads) {
     identityId: identity.id
     registryServer: containerRegistryServer
     image: healthyFixtureImage
-    buildCommit: buildCommit
+    buildCommit: fixtureBuildCommit
     targetPort: 4100
     cpu: '0.25'
     memory: '0.5Gi'
@@ -476,7 +483,7 @@ module healthyFixture 'modules/container-app.bicep' = if (deployWorkloads) {
 }
 
 module invalidOutputFixture 'modules/container-app.bicep' = if (deployWorkloads) {
-  name: 'fixture-invalid-${take(buildCommit, 10)}'
+  name: 'fixture-invalid-${take(fixtureBuildCommit, 10)}'
   params: {
     name: invalidOutputName
     location: location
@@ -485,7 +492,7 @@ module invalidOutputFixture 'modules/container-app.bicep' = if (deployWorkloads)
     identityId: identity.id
     registryServer: containerRegistryServer
     image: invalidOutputFixtureImage
-    buildCommit: buildCommit
+    buildCommit: fixtureBuildCommit
     targetPort: 4101
     cpu: '0.25'
     memory: '0.5Gi'
@@ -508,7 +515,7 @@ module invalidOutputFixture 'modules/container-app.bicep' = if (deployWorkloads)
 }
 
 module schemaDriftFixture 'modules/container-app.bicep' = if (deployWorkloads) {
-  name: 'fixture-drift-${take(buildCommit, 10)}'
+  name: 'fixture-drift-${take(fixtureBuildCommit, 10)}'
   params: {
     name: schemaDriftName
     location: location
@@ -517,7 +524,7 @@ module schemaDriftFixture 'modules/container-app.bicep' = if (deployWorkloads) {
     identityId: identity.id
     registryServer: containerRegistryServer
     image: schemaDriftFixtureImage
-    buildCommit: buildCommit
+    buildCommit: fixtureBuildCommit
     targetPort: 4102
     cpu: '0.25'
     memory: '0.5Gi'
@@ -540,7 +547,7 @@ module schemaDriftFixture 'modules/container-app.bicep' = if (deployWorkloads) {
 }
 
 module timeoutFixture 'modules/container-app.bicep' = if (deployWorkloads) {
-  name: 'fixture-timeout-${take(buildCommit, 10)}'
+  name: 'fixture-timeout-${take(fixtureBuildCommit, 10)}'
   params: {
     name: timeoutName
     location: location
@@ -549,7 +556,7 @@ module timeoutFixture 'modules/container-app.bicep' = if (deployWorkloads) {
     identityId: identity.id
     registryServer: containerRegistryServer
     image: timeoutFixtureImage
-    buildCommit: buildCommit
+    buildCommit: fixtureBuildCommit
     targetPort: 4103
     cpu: '0.25'
     memory: '0.5Gi'
@@ -637,6 +644,8 @@ output activationMode string = activationMode
 output backendDeployed bool = deployBackend
 output backendOrigin string = deployBackend ? backendOrigin : ''
 output fixtureOrigins array = deployWorkloads ? [healthyOrigin, invalidOutputOrigin, schemaDriftOrigin, timeoutOrigin] : []
+output backendBuildCommit string = buildCommit
+output fixtureBuildCommit string = fixtureBuildCommit
 output keyVaultName string = keyVault.name
 output managedEnvironmentName string = containerEnvironment.name
 output managedIdentityId string = identity.id

@@ -9,7 +9,7 @@ if (!file || !new Set(["example", "deployment", "active"]).has(mode)) {
 const parsed = JSON.parse(readFileSync(file, "utf8"));
 const parameters = Object.fromEntries(Object.entries(parsed.parameters ?? {}).map(([name, entry]) => [name, entry.value]));
 const required = [
-  "namePrefix", "activationMode", "writerCutoverApproved", "deployWorkloads", "deployBackend", "buildCommit",
+  "namePrefix", "activationMode", "writerCutoverApproved", "deployWorkloads", "deployBackend", "buildCommit", "fixtureBuildCommit",
   "sourceRepositoryUrl", "vercelWebOrigin", "containerRegistrySubscriptionId", "containerRegistryResourceGroup",
   "containerRegistryName", "containerRegistryServer", "backendImage", "healthyFixtureImage",
   "invalidOutputFixtureImage", "schemaDriftFixtureImage", "timeoutFixtureImage", "xlayerRpcUrl",
@@ -42,6 +42,7 @@ if (!/^(?![.])[A-Za-z0-9_.()-]{1,90}(?<![.])$/.test(parameters.containerRegistry
   throw new Error("containerRegistryResourceGroup is invalid");
 }
 if (!/^[0-9a-f]{40}$/i.test(parameters.buildCommit)) throw new Error("buildCommit must be a full Git SHA");
+if (!/^[0-9a-f]{40}$/i.test(parameters.fixtureBuildCommit)) throw new Error("fixtureBuildCommit must be a full Git SHA");
 const head = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 if (parameters.buildCommit.toLowerCase() !== head.toLowerCase()) throw new Error("buildCommit must equal the checked-out immutable HEAD");
 
@@ -70,9 +71,15 @@ if (parameters.xlayerRpcUrl === parameters.xlayerFallbackRpcUrl) throw new Error
 
 if (!/^[a-z0-9]{5,50}$/.test(parameters.containerRegistryName)) throw new Error("containerRegistryName is invalid");
 if (parameters.containerRegistryServer !== `${parameters.containerRegistryName}.azurecr.io`) throw new Error("registry server/name mismatch");
-const images = ["backendImage", "healthyFixtureImage", "invalidOutputFixtureImage", "schemaDriftFixtureImage", "timeoutFixtureImage"];
-for (const name of images) {
-  const expected = new RegExp(`^${parameters.containerRegistryServer.replaceAll(".", "\\.")}\\/[a-z0-9._/-]+:${parameters.buildCommit}@sha256:[0-9a-f]{64}$`, "i");
+const images = [
+  ["backendImage", parameters.buildCommit],
+  ["healthyFixtureImage", parameters.fixtureBuildCommit],
+  ["invalidOutputFixtureImage", parameters.fixtureBuildCommit],
+  ["schemaDriftFixtureImage", parameters.fixtureBuildCommit],
+  ["timeoutFixtureImage", parameters.fixtureBuildCommit],
+];
+for (const [name, commit] of images) {
+  const expected = new RegExp(`^${parameters.containerRegistryServer.replaceAll(".", "\\.")}\\/[a-z0-9._/-]+:${commit}@sha256:[0-9a-f]{64}$`, "i");
   if (!expected.test(parameters[name])) throw new Error(`${name} must be an immutable image digest from the approved existing ACR`);
 }
 for (const [name, maximum] of [["targetPaymentMaxUsdt0", 10], ["targetPaymentDailyLimitUsdt0", 100]]) {

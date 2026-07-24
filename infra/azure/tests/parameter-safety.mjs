@@ -9,21 +9,23 @@ const example = JSON.parse(readFileSync(join(azureDirectory, "parameters/candida
 const values = example.parameters;
 const set = (name, value) => { values[name].value = value; };
 const head = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+const fixtureCommit = "2".repeat(40);
 const registry = "syntheticlaunchproofacr";
 set("buildCommit", head);
+set("fixtureBuildCommit", fixtureCommit);
 set("sourceRepositoryUrl", "https://github.com/example/launchproof");
 set("vercelWebOrigin", "https://launchproof.dev");
 set("containerRegistrySubscriptionId", "11111111-2222-3333-4444-555555555555");
 set("containerRegistryResourceGroup", "launchproof-registry-rg");
 set("containerRegistryName", registry);
 set("containerRegistryServer", `${registry}.azurecr.io`);
+set("backendImage", `${registry}.azurecr.io/launchproof/backend:${head}@sha256:${"a".repeat(64)}`);
 for (const [name, repository, byte] of [
-  ["backendImage", "backend", "a"],
   ["healthyFixtureImage", "fixture-healthy", "b"],
   ["invalidOutputFixtureImage", "fixture-invalid", "c"],
   ["schemaDriftFixtureImage", "fixture-drift", "d"],
   ["timeoutFixtureImage", "fixture-timeout", "e"],
-]) set(name, `${registry}.azurecr.io/launchproof/${repository}:${head}@sha256:${byte.repeat(64)}`);
+]) set(name, `${registry}.azurecr.io/launchproof/${repository}:${fixtureCommit}@sha256:${byte.repeat(64)}`);
 set("xlayerRpcUrl", "https://testrpc.xlayer.tech");
 set("xlayerFallbackRpcUrl", "https://xlayertestrpc.okx.com");
 set("xlayerExplorerUrl", "https://www.okx.com/web3/explorer/xlayer-test");
@@ -60,6 +62,8 @@ try {
   const unsafeCases = [
     ["wrong testnet asset", (document) => { document.parameters.xlayerUsdt0Address.value = `0x${"99".repeat(20)}`; }],
     ["mutable image", (document) => { document.parameters.backendImage.value = `${registry}.azurecr.io/launchproof/backend:latest`; }],
+    ["fixture tagged as backend", (document) => { document.parameters.healthyFixtureImage.value = `${registry}.azurecr.io/launchproof/fixture-healthy:${head}@sha256:${"b".repeat(64)}`; }],
+    ["invalid fixture commit", (document) => { document.parameters.fixtureBuildCommit.value = "not-a-commit"; }],
     ["wildcard frontend", (document) => { document.parameters.vercelWebOrigin.value = "https://*"; }],
     ["active without approval", (document) => { document.parameters.activationMode.value = "active"; document.parameters.writerCutoverApproved.value = false; }],
     ["active without workloads", (document) => { document.parameters.activationMode.value = "active"; document.parameters.writerCutoverApproved.value = true; document.parameters.deployWorkloads.value = false; }],
