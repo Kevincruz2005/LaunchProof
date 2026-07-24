@@ -36,6 +36,9 @@ if (count("Microsoft.ContainerRegistry/registries") !== 0) throw new Error("the 
 if (count("Microsoft.DBforPostgreSQL/flexibleServers") !== 0) throw new Error("Supabase must not be migrated in Phase 6");
 
 requireSource(/activeRevisionsMode:\s*'Single'/, "Container Apps must use single active revision mode");
+if (/workloadProfileType:\s*'Consumption'[\s\S]{0,160}(minimumCount|maximumCount):/.test(mainSource)) {
+  throw new Error("Consumption environment profiles must omit unsupported minimumCount/maximumCount properties");
+}
 requireSource(/minReplicas:\s*minReplicas[\s\S]*maxReplicas:\s*maxReplicas/, "replica limits are missing");
 requireSource(/@minValue\(1\)[\s\S]*@maxValue\(1\)[\s\S]*param minReplicas/, "minReplicas must be fixed at one");
 requireSource(/@minValue\(1\)[\s\S]*@maxValue\(1\)[\s\S]*param maxReplicas/, "maxReplicas must be fixed at one");

@@ -981,3 +981,5 @@ git diff --check
 ```
 
 Results: backend typecheck passed; 133/133 backend tests passed; all three Bicep entry points compiled using Bicep 0.45.15; parameter, rendered-template, resource-group, health-acceptance, Bash, and ShellCheck safety suites passed. The local IaC test still confirms that `main.bicep` itself creates no registry or database; ACR creation is isolated in the separately approved template. No cloud identity had been queried and no cloud resource had been created at this checkpoint.
+
+On 2026-07-24 the first complete Azure resource-group what-if stopped with `WorkloadProfilePropertyNotSupported`: Azure Central India does not accept environment-level `minimumCount` or `maximumCount` on the Consumption workload profile. No resource from that failed what-if was applied. The user explicitly replied `APPROVE CONSUMPTION PROFILE FIX`, authorizing removal of only those two unsupported environment-profile properties. Per-app `minReplicas=1` and `maxReplicas=1` remain mandatory and covered by the rendered-template test.
