@@ -56,6 +56,13 @@ requireSource(/backend-readonly-database-url/, "read-only backend database secre
 if (!backendDockerfile.includes('if [ \\"$BACKEND_MODE\\" = \\"read-only\\" ]; then exec node backend/dist/index.js; else')) {
   throw new Error("read-only backend image must start without attempting database migrations");
 }
+for (const required of [
+  "COPY packages/passport-gate/package.json packages/passport-gate/package.json",
+  "pnpm --filter @launchproof/passport-gate build",
+  "COPY --from=build /app/packages/passport-gate ./packages/passport-gate",
+]) {
+  if (!backendDockerfile.includes(required)) throw new Error(`backend image omitted PassportGate runtime dependency: ${required}`);
+}
 requireSource(/fixture-healthy-provider-private-key/, "healthy stable Key Vault identity is missing");
 requireSource(/fixture-invalid-output-provider-private-key/, "invalid-output stable Key Vault identity is missing");
 requireSource(/fixture-schema-drift-provider-private-key/, "schema-drift stable Key Vault identity is missing");
